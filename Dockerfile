@@ -2,7 +2,7 @@
 FROM python:3.11-slim
 
 # 2. 作業ディレクトリ
-WORKDIR /rajiotaisou
+WORKDIR /app
 
 # 更新・日本語化
 RUN apt-get update && apt-get -y install locales && apt-get -y upgrade && \
@@ -14,8 +14,8 @@ ENV TZ Asia/Tokyo
 ENV TERM xterm
 
 # 3. 必要なファイルをコピー
-COPY requirements.txt /rajiotaisou/
-COPY . /rajiotaisou/
+COPY requirements.txt /app/
+COPY . /app/
 
 # 4. ライブラリのインストール
 RUN pip install --no-cache-dir -r requirements.txt
@@ -27,5 +27,5 @@ RUN mkdir -p /app/data
 EXPOSE 8080
 
 # 5. Botを起動（ファイル名はあなたのBotで合わせる）
-CMD ["python", "app/main.py"]
+CMD ["python", "main.py"]
 # もし bot.py なら：
