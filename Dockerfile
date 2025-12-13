@@ -15,7 +15,7 @@ ENV TERM xterm
 
 # 3. 必要なファイルをコピー
 COPY requirements.txt /app/
-COPY . /app/
+COPY app/ /app/
 
 # 4. ライブラリのインストール
 RUN pip install --no-cache-dir -r requirements.txt
@@ -27,5 +27,5 @@ RUN mkdir -p /app/data
 EXPOSE 8080
 
 # 5. Botを起動（ファイル名はあなたのBotで合わせる）
-CMD ["python", "app/main.py"]
+CMD ["python", "main.py"]
 # もし bot.py なら：
