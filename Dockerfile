@@ -27,5 +27,5 @@ RUN mkdir -p /app/data
 EXPOSE 8080
 
 # 5. Botを起動（ファイル名はあなたのBotで合わせる）
-CMD ["python", "main.py"]
+CMD ["python", "app/main.py"]
 # もし bot.py なら：
