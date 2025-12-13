@@ -5,7 +5,7 @@ import json
 import datetime
 import calendar
 import asyncio
-
+from server import server_thread
 import discord
 from discord.ext import commands, tasks
 from PIL import Image # type: ignore
@@ -402,3 +402,4 @@ server_thread()
 # ==========================
 if __name__ == "__main__":
     bot.run(TOKEN)
+
