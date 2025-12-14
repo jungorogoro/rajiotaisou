@@ -5,7 +5,6 @@ import json
 import datetime
 import calendar
 import asyncio
-from server import server_thread
 import discord
 from discord.ext import commands, tasks
 from PIL import Image # type: ignore
@@ -394,12 +393,21 @@ async def setup_hook():
 
     auto_stamp_check.start()
 
-# Koyeb用 サーバー立ち上げ
-server_thread()
 
 # ==========================
 # 実行
 # ==========================
+import threading
+import uvicorn
+from server import app
+
+def run_api():
+    uvicorn.run(app, host="0.0.0.0", port=8080)
+
 if __name__ == "__main__":
-    bot.run(TOKEN)
+    # FastAPI を起動（Koyebのヘルスチェック用）
+    threading.Thread(target=run_api, daemon=True).start()
+
+    # Discord Bot 起動
+    bot.run(os.getenv("DISCORD_TOKEN"))
 
