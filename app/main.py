@@ -15,7 +15,10 @@ TOKEN = os.getenv("DISCORD_TOKEN")
 CLIENT_ID = os.getenv("CLIENT_ID")
 VOICE_CHANNEL_ID = int(os.getenv("VOICE_CHANNEL_ID"))
 GUILD_ID = int(os.getenv("GUILD_ID"))
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 # === intents / bot ===
 intents = discord.Intents.default()
 intents.voice_states = True
@@ -410,4 +413,5 @@ if __name__ == "__main__":
 
     # Discord Bot 起動
     bot.run(os.getenv("DISCORD_TOKEN"))
+
 
