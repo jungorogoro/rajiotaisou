@@ -1,7 +1,6 @@
 discord.py
 python-dotenv
 Pillow
-pip
-uvicorn
-fastapi
 supabase
+fastapi
+uvicorn
