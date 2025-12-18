@@ -162,11 +162,11 @@ def create_calendar(user_id: int, period: str):
     )
 
     # ===== 設定 =====
-    CELL_W = 100
-    CELL_H = 100
-    STAMP_SIZE = 80
-    START_X = 50
-    START_Y = 200
+    CELL_W = 320
+    CELL_H = 265
+    STAMP_SIZE = 250
+    START_X = 155
+    START_Y = 395
 
     # スタンプ画像
     stamp_img = Image.open(
