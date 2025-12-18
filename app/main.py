@@ -303,25 +303,25 @@ def ranking_text(title, data):
         msg += f"{i}位 <@{u}> {c}回\n"
     return msg
 
-@bot.tree.command(name="ranking_morning_total")
+@bot.tree.command(name="ranking_morning_total",description="朝のトータル参加ランキングを表示")
 async def rmt(interaction: discord.Interaction):
     await interaction.response.send_message(
         ranking_text("朝 トータル", get_ranking("morning"))
     )
 
-@bot.tree.command(name="ranking_morning_month")
+@bot.tree.command(name="ranking_morning_month",description="朝の月間参加ランキングを表示")
 async def rmm(interaction: discord.Interaction):
     await interaction.response.send_message(
         ranking_text("朝 今月", get_ranking("morning", True))
     )
 
-@bot.tree.command(name="ranking_night_total")
+@bot.tree.command(name="ranking_night_total",description="夜のトータル参加ランキングを表示")
 async def rnt(interaction: discord.Interaction):
     await interaction.response.send_message(
         ranking_text("夜 トータル", get_ranking("night"))
     )
 
-@bot.tree.command(name="ranking_night_month")
+@bot.tree.command(name="ranking_night_month",description="夜の月間参加ランキングを表示")
 async def rnm(interaction: discord.Interaction):
     await interaction.response.send_message(
         ranking_text("夜 今月", get_ranking("night", True))
