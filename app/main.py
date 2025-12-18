@@ -238,10 +238,21 @@ async def rnm(interaction: discord.Interaction):
 # 起動
 # =====================
 @bot.event
-async def on_ready():
-    await bot.tree.sync()
-    print("Bot ready")
+async def setup_hook():
+    GUILD_ID = int(os.getenv("GUILD_ID"))
+
+    guild = discord.Object(id=GUILD_ID)
+
+    # 念のためギルドコマンドをクリア
+    bot.tree.clear_commands(guild=guild)
+
+    # ギルド限定で即同期
+    await bot.tree.sync(guild=guild)
+
+    print(f"✅ Slash commands synced to guild {GUILD_ID}")
+
 
 if __name__ == "__main__":
     threading.Thread(target=start_server, daemon=True).start()
     bot.run(TOKEN)
+
