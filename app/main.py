@@ -121,14 +121,14 @@ def calc_stats(user_id: int, period: str):
 # カレンダー作成
 # =====================
 def create_calendar(user_id: int, period: str):
-    now = today()
+    now = datetime.date.today()
     ym = now.strftime("%Y_%m")
 
-    base_name = (
-        f"calendar_base_{ym}.png"
-        if period == "morning"
-        else f"calendar_nt_base{ym}.png"
-    )
+    # 画像ファイル名（仕様どおり）
+    if period == "morning":
+        base_name = f"calendar_base_{ym}.png"
+    else:
+        base_name = f"calendar_nt_base{ym}.png"  # ← ここ重要（_なし）
 
     base_path = os.path.join(IMAGE_DIR, base_name)
     output_path = os.path.join(DATA_DIR, f"{user_id}_{period}_{ym}.png")
@@ -144,15 +144,21 @@ def create_calendar(user_id: int, period: str):
         .data
     )
 
+    stamp_img = Image.open(
+        os.path.join(IMAGE_DIR, "stamp.png")
+    ).convert("RGBA")
+
     for r in rows:
         d = datetime.date.fromisoformat(r["stamp_date"])
-        if d.month != now.month:
+
+        # 今月分のみ反映
+        if d.year != now.year or d.month != now.month:
             continue
 
         x = 50 + (d.day - 1) % 7 * 100
         y = 200 + (d.day - 1) // 7 * 100
-        stamp = Image.open(os.path.join(IMAGE_DIR, "stamp.png")).convert("RGBA")
-        img.paste(stamp, (x, y), stamp)
+
+        img.paste(stamp_img, (x, y), stamp_img)
 
     img.save(output_path)
     return output_path
@@ -160,6 +166,20 @@ def create_calendar(user_id: int, period: str):
 # =====================
 # スタンプコマンド
 # =====================
+@bot.tree.command(
+    name="stamp_m",
+    description="朝のスタンプカードと参加記録を表示"
+)
+async def stamp_m(interaction: discord.Interaction):
+    await send_stamp(interaction, "morning")
+
+@bot.tree.command(
+    name="stamp_n",
+    description="夜のスタンプカードと参加記録を表示"
+)
+async def stamp_n(interaction: discord.Interaction):
+    await send_stamp(interaction, "night")
+
 async def send_stamp(
     interaction: discord.Interaction,
     period: str  # "morning" or "night"
@@ -265,4 +285,5 @@ async def setup_hook():
 if __name__ == "__main__":
     threading.Thread(target=start_server, daemon=True).start()
     bot.run(TOKEN)
+
 
