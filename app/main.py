@@ -62,10 +62,10 @@ def today():
     return datetime.date.today()
 
 def is_time_between(start):
-    now = datetime.datetime.now().time()
-    end = (datetime.datetime.combine(datetime.date.today(), start)
-           + datetime.timedelta(minutes=8)).time()
-    return start <= now <= end
+    now = datetime.datetime.now()
+    start_dt = datetime.datetime.combine(now.date(), start)
+    end_dt = start_dt + datetime.timedelta(minutes=REQUIRED_MINUTES)
+    return start_dt <= now <= end_dt
 
 def get_period():
     if is_time_between(MORNING_START):
@@ -78,11 +78,25 @@ def get_period():
 # スタンプ記録
 # =====================
 def record_stamp(user_id: int, period: str):
+    exists = (
+        supabase.table("stamps")
+        .select("id")
+        .eq("user_id", user_id)
+        .eq("period", period)
+        .eq("stamp_date", today().isoformat())
+        .execute()
+        .data
+    )
+
+    if exists:
+        return False
+
     supabase.table("stamps").insert({
         "user_id": user_id,
         "stamp_date": today().isoformat(),
         "period": period
     }).execute()
+    return True
 
 # =====================
 # 統計計算
@@ -263,6 +277,7 @@ async def setup_hook():
 if __name__ == "__main__":
     threading.Thread(target=start_server, daemon=True).start()
     bot.run(TOKEN)
+
 
 
 
