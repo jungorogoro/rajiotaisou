@@ -182,12 +182,27 @@ def create_calendar(user_id: int, period: str):
 # =====================
 # スタンプコマンド
 # =====================
+# =====================
+# スタンプコマンド
+# =====================
 @bot.tree.command(
     name="stamp_m",
     description="朝のスタンプカードと参加記録を表示"
 )
+async def stamp_m(interaction: discord.Interaction):
+    await send_stamp(interaction, "morning")
+
+
+@bot.tree.command(
+    name="stamp_n",
+    description="夜のスタンプカードと参加記録を表示"
+)
+async def stamp_n(interaction: discord.Interaction):
+    await send_stamp(interaction, "night")
+
+
 async def send_stamp(interaction: discord.Interaction, period: str):
-await interaction.response.defer(thinking=True)  # ← これが超重要
+    await interaction.response.defer(thinking=True)
 
     user_id = interaction.user.id
 
@@ -207,7 +222,6 @@ await interaction.response.defer(thinking=True)  # ← これが超重要
         content=text,
         file=discord.File(img_path)
     )
-
 
 # =====================
 # ランキング
@@ -269,7 +283,6 @@ async def setup_hook():
 if __name__ == "__main__":
     threading.Thread(target=start_server, daemon=True).start()
     bot.run(TOKEN)
-
 
 
 
