@@ -165,17 +165,31 @@ def create_calendar(user_id: int, period: str):
         os.path.join(IMAGE_DIR, "stamp.png")
     ).convert("RGBA")
 
-    for r in rows:
-        d = datetime.date.fromisoformat(r["stamp_date"])
+# ★ 追加：月初の曜日を取得（for の外）
+first_day = datetime.date(now.year, now.month, 1)
+first_weekday = first_day.weekday()   # 月曜=0
+start_col = (first_weekday + 1) % 7   # 日曜始まりに変換
 
-        # 今月分のみ反映
-        if d.year != now.year or d.month != now.month:
-            continue
+CELL_W = 100
+CELL_H = 100
+START_X = 50
+START_Y = 200
 
-        x = 50 + (d.day - 1) % 7 * 100
-        y = 200 + (d.day - 1) // 7 * 100
+for r in rows:
+    d = datetime.date.fromisoformat(r["stamp_date"])
 
-        img.paste(stamp_img, (x, y), stamp_img)
+    # 今月分のみ反映
+    if d.year != now.year or d.month != now.month:
+        continue
+
+    index = start_col + (d.day - 1)
+    col = index % 7
+    row = index // 7
+
+    x = START_X + col * CELL_W
+    y = START_Y + row * CELL_H
+
+    img.paste(stamp_img, (x, y), stamp_img)
 
     img.save(output_path)
     return output_path
