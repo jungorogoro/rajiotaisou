@@ -160,33 +160,43 @@ def create_calendar(user_id: int, period: str):
 # =====================
 # スタンプコマンド
 # =====================
-@bot.tree.command(name="stamp")
-async def stamp(interaction: discord.Interaction):
-    period = get_period()
-    if not period:
-        await interaction.response.send_message("⏰ スタンプ時間外です", ephemeral=True)
-        return
+async def send_stamp(
+    interaction: discord.Interaction,
+    period: str  # "morning" or "night"
+):
+    user_id = interaction.user.id
 
-    record_stamp(interaction.user.id, period)
-    path = create_calendar(interaction.user.id, period)
-    total, current, max_s = calc_stats(interaction.user.id, period)
+    # Supabase から日付一覧取得
+    res = (
+        supabase
+        .table("stamps")
+        .select("stamp_date")
+        .eq("user_id", user_id)
+        .eq("period", period)
+        .execute()
+    )
 
-    title = "🌅 朝のスタンプ" if period == "morning" else "🌙 夜のスタンプ"
+    dates = [r["stamp_date"] for r in res.data]
 
-    embed = discord.Embed(
-        title=title,
-        description=(
-            f"📅 参加日数：{total}日\n"
-            f"🔥 連続参加：{current}日\n"
-            f"🏆 最高連続：{max_s}日"
-        ),
-        color=0xFFD700
+    stats = calc_stats(dates)
+
+    # カレンダー画像生成
+    img_path = create_calendar(user_id, period)
+
+    label = "🌅 朝" if period == "morning" else "🌙 夜"
+
+    text = (
+        f"{label}の参加記録\n"
+        f"✅ 総参加日数：{stats['total']}日\n"
+        f"🔥 連続参加中：{stats['current_streak']}日\n"
+        f"🏆 最多連続：{stats['max_streak']}日"
     )
 
     await interaction.response.send_message(
-        embed=embed,
-        file=discord.File(path)
+        content=text,
+        file=discord.File(img_path)
     )
+
 
 # =====================
 # ランキング
