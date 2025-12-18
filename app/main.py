@@ -26,6 +26,8 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 # =====================
 intents = discord.Intents.default()
 intents.voice_states = True
+intents.guilds = True
+
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
@@ -251,7 +253,6 @@ async def rnm(interaction: discord.Interaction):
 # 起動
 # =====================
 @bot.event
-@bot.event
 async def setup_hook():
     # 全体（グローバル）同期
     await bot.tree.sync()
@@ -262,6 +263,7 @@ async def setup_hook():
 if __name__ == "__main__":
     threading.Thread(target=start_server, daemon=True).start()
     bot.run(TOKEN)
+
 
 
 
