@@ -131,14 +131,15 @@ def calc_stats(user_id: int, period: str):
         max_streak = max(max_streak, streak)
         prev = d
 
-    # ===== 現在連続（今日基準）=====
-    date_set = set(dates)
+    # ===== 現在連続（最後に押した日基準）=====
     current_streak = 0
-    cur = today()
-
-    while cur in date_set:
-        current_streak += 1
-        cur -= datetime.timedelta(days=1)
+    if dates:
+        current_streak = 1
+        for i in range(len(dates) - 1, 0, -1):
+            if (dates[i] - dates[i - 1]).days == 1:
+                current_streak += 1
+            else:
+                break
 
     return total, current_streak, max_streak
 
