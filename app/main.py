@@ -202,6 +202,9 @@ async def stamp_n(interaction: discord.Interaction):
     await send_stamp(interaction, "night")
 
 
+# =====================
+# 共通処理（コマンドではない）
+# =====================
 async def send_stamp(interaction: discord.Interaction, period: str):
     await interaction.response.defer(thinking=True)
 
