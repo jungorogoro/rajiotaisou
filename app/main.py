@@ -186,17 +186,9 @@ def create_calendar(user_id: int, period: str):
     name="stamp_m",
     description="朝のスタンプカードと参加記録を表示"
 )
-async def stamp_m(interaction: discord.Interaction):
-    await send_stamp(interaction, "morning")
-
-@bot.tree.command(
-    name="stamp_n",
-    description="夜のスタンプカードと参加記録を表示"
-)
-async def stamp_n(interaction: discord.Interaction):
-    await send_stamp(interaction, "night")
-
 async def send_stamp(interaction: discord.Interaction, period: str):
+    await interaction.response.defer()  # ← これが超重要
+
     user_id = interaction.user.id
 
     total, current, max_streak = calc_stats(user_id, period)
@@ -211,7 +203,7 @@ async def send_stamp(interaction: discord.Interaction, period: str):
         f"🏆 最多連続：{max_streak}日"
     )
 
-    await interaction.response.send_message(
+    await interaction.followup.send(
         content=text,
         file=discord.File(img_path)
     )
@@ -277,6 +269,7 @@ async def setup_hook():
 if __name__ == "__main__":
     threading.Thread(target=start_server, daemon=True).start()
     bot.run(TOKEN)
+
 
 
 
