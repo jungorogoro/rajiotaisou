@@ -3,6 +3,9 @@ import datetime
 import calendar
 import asyncio
 
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
 import discord
 from discord.ext import commands, tasks
 from PIL import Image
@@ -128,11 +131,24 @@ async def ranking(interaction: discord.Interaction):
 
     await interaction.response.send_message(msg)
 
+def start_health_server():
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"OK")
+
+    server = HTTPServer(("0.0.0.0", 8080), Handler)
+    server.serve_forever()
+
+
+
 # ========= 起動 =========
 @bot.event
 async def setup_hook():
     guild = discord.Object(id=GUILD_ID)
     bot.tree.copy_global_to(guild=guild)
     await bot.tree.sync(guild=guild)
+threading.Thread(target=start_health_server, daemon=True).start()
 
 bot.run(TOKEN)
