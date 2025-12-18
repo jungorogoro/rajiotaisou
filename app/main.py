@@ -180,36 +180,19 @@ async def stamp_m(interaction: discord.Interaction):
 async def stamp_n(interaction: discord.Interaction):
     await send_stamp(interaction, "night")
 
-async def send_stamp(
-    interaction: discord.Interaction,
-    period: str  # "morning" or "night"
-):
+async def send_stamp(interaction: discord.Interaction, period: str):
     user_id = interaction.user.id
 
-    # Supabase から日付一覧取得
-    res = (
-        supabase
-        .table("stamps")
-        .select("stamp_date")
-        .eq("user_id", user_id)
-        .eq("period", period)
-        .execute()
-    )
-
-    dates = [r["stamp_date"] for r in res.data]
-
-    stats = calc_stats(dates)
-
-    # カレンダー画像生成
+    total, current, max_streak = calc_stats(user_id, period)
     img_path = create_calendar(user_id, period)
 
     label = "🌅 朝" if period == "morning" else "🌙 夜"
 
     text = (
         f"{label}の参加記録\n"
-        f"✅ 総参加日数：{stats['total']}日\n"
-        f"🔥 連続参加中：{stats['current_streak']}日\n"
-        f"🏆 最多連続：{stats['max_streak']}日"
+        f"✅ 総参加日数：{total}日\n"
+        f"🔥 連続参加中：{current}日\n"
+        f"🏆 最多連続：{max_streak}日"
     )
 
     await interaction.response.send_message(
@@ -268,22 +251,17 @@ async def rnm(interaction: discord.Interaction):
 # 起動
 # =====================
 @bot.event
+@bot.event
 async def setup_hook():
-    GUILD_ID = int(os.getenv("GUILD_ID"))
+    # 全体（グローバル）同期
+    await bot.tree.sync()
+    print("✅ Global slash commands synced")
 
-    guild = discord.Object(id=GUILD_ID)
-
-    # 念のためギルドコマンドをクリア
-    bot.tree.clear_commands(guild=guild)
-
-    # ギルド限定で即同期
-    await bot.tree.sync(guild=guild)
-
-    print(f"✅ Slash commands synced to guild {GUILD_ID}")
 
 
 if __name__ == "__main__":
     threading.Thread(target=start_server, daemon=True).start()
     bot.run(TOKEN)
+
 
 
