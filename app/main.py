@@ -108,16 +108,18 @@ def calc_stats(user_id: int, period: str):
         .select("stamp_date")
         .eq("user_id", user_id)
         .eq("period", period)
-        .order("stamp_date")
         .execute()
         .data
     )
 
-    dates = [datetime.date.fromisoformat(r["stamp_date"]) for r in rows]
+    dates = sorted(
+        datetime.date.fromisoformat(r["stamp_date"]) for r in rows
+    )
+
     total = len(dates)
 
+    # ===== 最大連続 =====
     max_streak = 0
-    current_streak = 0
     streak = 0
     prev = None
 
@@ -129,14 +131,43 @@ def calc_stats(user_id: int, period: str):
         max_streak = max(max_streak, streak)
         prev = d
 
-    if dates and dates[-1] == today():
-        current_streak = streak
+    # ===== 現在連続（今日基準）=====
+    date_set = set(dates)
+    current_streak = 0
+    cur = today()
+
+    while cur in date_set:
+        current_streak += 1
+        cur -= datetime.timedelta(days=1)
 
     return total, current_streak, max_streak
+
 
 # =====================
 # カレンダー作成
 # =====================
+
+def find_calendar_image(period: str, ym: str):
+    if period == "morning":
+        name = f"calendar_base_{ym}.png"
+    else:
+        name = f"calendar_nt_base{ym}.png"
+
+    path = os.path.join(IMAGE_DIR, name)
+    if os.path.exists(path):
+        return path
+
+    # なければ最新の画像を使う
+    files = sorted(
+        f for f in os.listdir(IMAGE_DIR)
+        if f.startswith("calendar_") and f.endswith(".png")
+    )
+    if not files:
+        raise FileNotFoundError("カレンダー画像がありません")
+
+    return os.path.join(IMAGE_DIR, files[-1])
+
+
 def create_calendar(user_id: int, period: str):
     now = datetime.date.today()
     ym = now.strftime("%Y_%m")
@@ -147,7 +178,7 @@ def create_calendar(user_id: int, period: str):
     else:
         base_name = f"calendar_nt_base{ym}.png"
 
-    base_path = os.path.join(IMAGE_DIR, base_name)
+    base_path = find_calendar_image(period, ym)
     output_path = os.path.join(DATA_DIR, f"{user_id}_{period}_{ym}.png")
 
     img = Image.open(base_path).convert("RGBA")
