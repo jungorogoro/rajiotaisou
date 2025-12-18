@@ -274,9 +274,12 @@ async def rnm(interaction: discord.Interaction):
 # =====================
 @bot.event
 async def setup_hook():
+    guild = discord.Object(id=GUILD_ID)
+    await bot.tree.sync(guild=guild)
+    print("✅ Guild slash commands synced")
     # 全体（グローバル）同期
-    await bot.tree.sync()
-    print("✅ Global slash commands synced")
+#    await bot.tree.sync()
+#    print("✅ Global slash commands synced")
 
 
 
