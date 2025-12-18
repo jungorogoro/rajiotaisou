@@ -141,11 +141,11 @@ def create_calendar(user_id: int, period: str):
     now = datetime.date.today()
     ym = now.strftime("%Y_%m")
 
-    # 画像ファイル名（仕様どおり）
+    # 画像ファイル名
     if period == "morning":
         base_name = f"calendar_base_{ym}.png"
     else:
-        base_name = f"calendar_nt_base{ym}.png"  # ← ここ重要（_なし）
+        base_name = f"calendar_nt_base{ym}.png"
 
     base_path = os.path.join(IMAGE_DIR, base_name)
     output_path = os.path.join(DATA_DIR, f"{user_id}_{period}_{ym}.png")
@@ -161,35 +161,46 @@ def create_calendar(user_id: int, period: str):
         .data
     )
 
+    # ===== 設定 =====
+    CELL_W = 100
+    CELL_H = 100
+    STAMP_SIZE = 80
+    START_X = 50
+    START_Y = 200
+
+    # スタンプ画像
     stamp_img = Image.open(
         os.path.join(IMAGE_DIR, "stamp.png")
     ).convert("RGBA")
 
-# ★ 追加：月初の曜日を取得（for の外）
-first_day = datetime.date(now.year, now.month, 1)
-first_weekday = first_day.weekday()   # 月曜=0
-start_col = (first_weekday + 1) % 7   # 日曜始まりに変換
+    stamp_img = stamp_img.resize(
+        (STAMP_SIZE, STAMP_SIZE),
+        Image.Resampling.LANCZOS
+    )
 
-CELL_W = 100
-CELL_H = 100
-START_X = 50
-START_Y = 200
+    # 月初の曜日
+    first_day = datetime.date(now.year, now.month, 1)
+    first_weekday = first_day.weekday()      # 月曜=0
+    start_col = (first_weekday + 1) % 7      # 日曜始まり
 
-for r in rows:
-    d = datetime.date.fromisoformat(r["stamp_date"])
+    # ===== スタンプ配置 =====
+    for r in rows:
+        d = datetime.date.fromisoformat(r["stamp_date"])
 
-    # 今月分のみ反映
-    if d.year != now.year or d.month != now.month:
-        continue
+        if d.year != now.year or d.month != now.month:
+            continue
 
-    index = start_col + (d.day - 1)
-    col = index % 7
-    row = index // 7
+        index = start_col + (d.day - 1)
+        col = index % 7
+        row = index // 7
 
-    x = START_X + col * CELL_W
-    y = START_Y + row * CELL_H
+        x = START_X + col * CELL_W
+        y = START_Y + row * CELL_H
 
-    img.paste(stamp_img, (x, y), stamp_img)
+        x_center = x + (CELL_W - STAMP_SIZE) // 2
+        y_center = y + (CELL_H - STAMP_SIZE) // 2
+
+        img.paste(stamp_img, (x_center, y_center), stamp_img)
 
     img.save(output_path)
     return output_path
