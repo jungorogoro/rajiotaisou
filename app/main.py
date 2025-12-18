@@ -187,7 +187,7 @@ def create_calendar(user_id: int, period: str):
     description="朝のスタンプカードと参加記録を表示"
 )
 async def send_stamp(interaction: discord.Interaction, period: str):
-    await interaction.response.defer()  # ← これが超重要
+await interaction.response.defer(thinking=True)  # ← これが超重要
 
     user_id = interaction.user.id
 
@@ -269,6 +269,7 @@ async def setup_hook():
 if __name__ == "__main__":
     threading.Thread(target=start_server, daemon=True).start()
     bot.run(TOKEN)
+
 
 
 
