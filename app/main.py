@@ -183,9 +183,6 @@ def create_calendar(user_id: int, period: str):
 # =====================
 # スタンプコマンド
 # =====================
-# =====================
-# スタンプコマンド
-# =====================
 @bot.tree.command(
     name="stamp_m",
     description="朝のスタンプカードと参加記録を表示"
@@ -279,8 +276,13 @@ async def rnm(interaction: discord.Interaction):
 @bot.event
 async def setup_hook():
     guild = discord.Object(id=GUILD_ID)
+
+    # ★ これが超重要
+    bot.tree.clear_commands(guild=guild)
+
     await bot.tree.sync(guild=guild)
-    print("✅ Guild slash commands synced")
+    print("✅ Guild slash commands RESET & synced")
+
     # 全体（グローバル）同期
 #    await bot.tree.sync()
 #    print("✅ Global slash commands synced")
