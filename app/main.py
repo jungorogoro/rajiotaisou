@@ -18,6 +18,7 @@ load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+GUILD_ID = int(os.getenv("GUILD_ID"))
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
