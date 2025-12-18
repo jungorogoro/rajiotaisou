@@ -1,154 +1,247 @@
 import os
 import datetime
-import calendar
-import asyncio
-
-import threading
-from http.server import BaseHTTPRequestHandler, HTTPServer
-
 import discord
-from discord.ext import commands, tasks
-from PIL import Image
+from discord import app_commands
+from discord.ext import commands
+from dotenv import load_dotenv
 from supabase import create_client
+from PIL import Image
+from fastapi import FastAPI
+import threading
+import uvicorn
 
-# ========= 環境変数 =========
+# =====================
+# 環境変数
+# =====================
+load_dotenv()
+
 TOKEN = os.getenv("DISCORD_TOKEN")
-GUILD_ID = int(os.getenv("GUILD_ID"))
-VOICE_CHANNEL_ID = int(os.getenv("VOICE_CHANNEL_ID"))
-
 SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# ========= Discord =========
+# =====================
+# Discord Bot
+# =====================
 intents = discord.Intents.default()
 intents.voice_states = True
-intents.members = True
+
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-join_times = {}
+# =====================
+# FastAPI (Koyeb用)
+# =====================
+app = FastAPI()
 
-# ========= 時間帯判定 =========
-def get_period():
+@app.get("/")
+def root():
+    return {"status": "ok"}
+
+def start_server():
+    uvicorn.run(app, host="0.0.0.0", port=8080)
+
+# =====================
+# 設定
+# =====================
+MORNING_START = datetime.time(11, 0)
+NIGHT_START = datetime.time(23, 0)
+REQUIRED_MINUTES = 8
+
+IMAGE_DIR = "images"
+DATA_DIR = "data"
+
+os.makedirs(DATA_DIR, exist_ok=True)
+
+# =====================
+# 共通関数
+# =====================
+def today():
+    return datetime.date.today()
+
+def is_time_between(start):
     now = datetime.datetime.now().time()
-    if datetime.time(11, 0) <= now <= datetime.time(11, 15):
+    end = (datetime.datetime.combine(datetime.date.today(), start)
+           + datetime.timedelta(minutes=8)).time()
+    return start <= now <= end
+
+def get_period():
+    if is_time_between(MORNING_START):
         return "morning"
-    if datetime.time(23, 0) <= now <= datetime.time(23, 15):
+    if is_time_between(NIGHT_START):
         return "night"
     return None
 
-# ========= Supabase保存 =========
-def save_stamp(user_id: int, period: str):
-    today = datetime.date.today().isoformat()
+# =====================
+# スタンプ記録
+# =====================
+def record_stamp(user_id: int, period: str):
     supabase.table("stamps").insert({
         "user_id": user_id,
-        "stamp_date": today,
+        "stamp_date": today().isoformat(),
         "period": period
     }).execute()
 
-# ========= VC監視 =========
-@bot.event
-async def on_voice_state_update(member, before, after):
-    period = get_period()
-    if not period:
-        return
-
-    uid = member.id
-    now = datetime.datetime.now()
-
-    if after.channel and after.channel.id == VOICE_CHANNEL_ID:
-        join_times[uid] = now
-        return
-
-    if before.channel and before.channel.id == VOICE_CHANNEL_ID:
-        start = join_times.pop(uid, None)
-        if start and (now - start).total_seconds() >= 480:
-            save_stamp(uid, period)
-
-# ========= カレンダー生成 =========
-def create_calendar(user_id: int, period: str):
-    today = datetime.date.today()
-    ym = today.strftime("%Y_%m")
-    ym_key = today.strftime("%Y-%m")
-
-    base = (
-        f"images/calendar_base_{ym}.png"
-        if period == "morning"
-        else f"images/calendar_nt_base{ym}.png"
+# =====================
+# 統計計算
+# =====================
+def calc_stats(user_id: int, period: str):
+    rows = (
+        supabase.table("stamps")
+        .select("stamp_date")
+        .eq("user_id", user_id)
+        .eq("period", period)
+        .order("stamp_date")
+        .execute()
+        .data
     )
 
-    out = f"/tmp/calendar_{user_id}_{period}.png"
-    img = Image.open(base).convert("RGBA")
-    stamp = Image.open("images/stamp.png").convert("RGBA").resize((250, 250))
+    dates = [datetime.date.fromisoformat(r["stamp_date"]) for r in rows]
+    total = len(dates)
 
-    data = supabase.table("stamps").select("*").eq("user_id", user_id).eq("period", period).execute().data
+    max_streak = 0
+    current_streak = 0
+    streak = 0
+    prev = None
 
-    positions = {}
-    first = datetime.date(today.year, today.month, 1).weekday()
-    start_col = (first + 1) % 7
-    for i in range(1, calendar.monthrange(today.year, today.month)[1] + 1):
-        idx = start_col + i - 1
-        positions[i] = (155 + (idx % 7) * 320, 395 + (idx // 7) * 265)
+    for d in dates:
+        if prev and (d - prev).days == 1:
+            streak += 1
+        else:
+            streak = 1
+        max_streak = max(max_streak, streak)
+        prev = d
 
-    for row in data:
-        d = int(row["stamp_date"][-2:])
-        img.paste(stamp, positions[d], stamp)
+    if dates and dates[-1] == today():
+        current_streak = streak
 
-    img.save(out)
-    return out
+    return total, current_streak, max_streak
 
-# ========= コマンド =========
-@bot.tree.command(name="stamp_morning")
-async def stamp_morning(interaction: discord.Interaction):
-    await interaction.response.defer()
-    path = create_calendar(interaction.user.id, "morning")
-    await interaction.followup.send(file=discord.File(path))
+# =====================
+# カレンダー作成
+# =====================
+def create_calendar(user_id: int, period: str):
+    now = today()
+    ym = now.strftime("%Y_%m")
 
-@bot.tree.command(name="stamp_night")
-async def stamp_night(interaction: discord.Interaction):
-    await interaction.response.defer()
-    path = create_calendar(interaction.user.id, "night")
-    await interaction.followup.send(file=discord.File(path))
+    base_name = (
+        f"calendar_base_{ym}.png"
+        if period == "morning"
+        else f"calendar_nt_base{ym}.png"
+    )
 
-@bot.tree.command(name="ranking")
-async def ranking(interaction: discord.Interaction):
-    res = supabase.table("stamps").select("user_id, period").execute().data
+    base_path = os.path.join(IMAGE_DIR, base_name)
+    output_path = os.path.join(DATA_DIR, f"{user_id}_{period}_{ym}.png")
 
-    scores = {"morning": {}, "night": {}}
-    for r in res:
-        scores[r["period"]][r["user_id"]] = scores[r["period"]].get(r["user_id"], 0) + 1
+    img = Image.open(base_path).convert("RGBA")
 
-    def top(p):
-        return sorted(scores[p].items(), key=lambda x: x[1], reverse=True)[:5]
+    rows = (
+        supabase.table("stamps")
+        .select("stamp_date")
+        .eq("user_id", user_id)
+        .eq("period", period)
+        .execute()
+        .data
+    )
 
-    msg = "🏆 **ランキング**\n\n🌅 朝\n"
-    for i, (u, c) in enumerate(top("morning"), 1):
+    for r in rows:
+        d = datetime.date.fromisoformat(r["stamp_date"])
+        if d.month != now.month:
+            continue
+
+        x = 50 + (d.day - 1) % 7 * 100
+        y = 200 + (d.day - 1) // 7 * 100
+        stamp = Image.open(os.path.join(IMAGE_DIR, "stamp.png")).convert("RGBA")
+        img.paste(stamp, (x, y), stamp)
+
+    img.save(output_path)
+    return output_path
+
+# =====================
+# スタンプコマンド
+# =====================
+@bot.tree.command(name="stamp")
+async def stamp(interaction: discord.Interaction):
+    period = get_period()
+    if not period:
+        await interaction.response.send_message("⏰ スタンプ時間外です", ephemeral=True)
+        return
+
+    record_stamp(interaction.user.id, period)
+    path = create_calendar(interaction.user.id, period)
+    total, current, max_s = calc_stats(interaction.user.id, period)
+
+    title = "🌅 朝のスタンプ" if period == "morning" else "🌙 夜のスタンプ"
+
+    embed = discord.Embed(
+        title=title,
+        description=(
+            f"📅 参加日数：{total}日\n"
+            f"🔥 連続参加：{current}日\n"
+            f"🏆 最高連続：{max_s}日"
+        ),
+        color=0xFFD700
+    )
+
+    await interaction.response.send_message(
+        embed=embed,
+        file=discord.File(path)
+    )
+
+# =====================
+# ランキング
+# =====================
+def get_ranking(period: str, month_only=False):
+    q = supabase.table("stamps").select("user_id, stamp_date").eq("period", period)
+    if month_only:
+        first = today().replace(day=1).isoformat()
+        q = q.gte("stamp_date", first)
+
+    rows = q.execute().data
+    scores = {}
+    for r in rows:
+        scores[r["user_id"]] = scores.get(r["user_id"], 0) + 1
+
+    return sorted(scores.items(), key=lambda x: x[1], reverse=True)[:10]
+
+def ranking_text(title, data):
+    msg = f"🏆 **{title}**\n"
+    for i, (u, c) in enumerate(data, 1):
         msg += f"{i}位 <@{u}> {c}回\n"
+    return msg
 
-    msg += "\n🌙 夜\n"
-    for i, (u, c) in enumerate(top("night"), 1):
-        msg += f"{i}位 <@{u}> {c}回\n"
+@bot.tree.command(name="ranking_morning_total")
+async def rmt(interaction: discord.Interaction):
+    await interaction.response.send_message(
+        ranking_text("朝 トータル", get_ranking("morning"))
+    )
 
-    await interaction.response.send_message(msg)
+@bot.tree.command(name="ranking_morning_month")
+async def rmm(interaction: discord.Interaction):
+    await interaction.response.send_message(
+        ranking_text("朝 今月", get_ranking("morning", True))
+    )
 
-def start_health_server():
-    class Handler(BaseHTTPRequestHandler):
-        def do_GET(self):
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(b"OK")
+@bot.tree.command(name="ranking_night_total")
+async def rnt(interaction: discord.Interaction):
+    await interaction.response.send_message(
+        ranking_text("夜 トータル", get_ranking("night"))
+    )
 
-    server = HTTPServer(("0.0.0.0", 8080), Handler)
-    server.serve_forever()
+@bot.tree.command(name="ranking_night_month")
+async def rnm(interaction: discord.Interaction):
+    await interaction.response.send_message(
+        ranking_text("夜 今月", get_ranking("night", True))
+    )
 
-
-
-# ========= 起動 =========
+# =====================
+# 起動
+# =====================
 @bot.event
-async def setup_hook():
-    guild = discord.Object(id=GUILD_ID)
-    bot.tree.copy_global_to(guild=guild)
-    await bot.tree.sync(guild=guild)
-threading.Thread(target=start_health_server, daemon=True).start()
+async def on_ready():
+    await bot.tree.sync()
+    print("Bot ready")
 
-bot.run(TOKEN)
+if __name__ == "__main__":
+    threading.Thread(target=start_server, daemon=True).start()
+    bot.run(TOKEN)
