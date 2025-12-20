@@ -21,6 +21,8 @@ SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 GUILD_ID = int(os.getenv("GUILD_ID"))
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+join_times = {}  # { user_id: datetime }
+
 
 # =====================
 # Discord Bot
@@ -47,9 +49,27 @@ def start_server():
 # =====================
 # 設定
 # =====================
-MORNING_START = datetime.time(11, 0)
-NIGHT_START = datetime.time(23, 0)
-REQUIRED_MINUTES = 8
+REQUIRED_MINUTES = 6
+WINDOW_MINUTES = 15
+
+TARGET_VC_ID = 1420270687356190810  # ← 指定VCのID
+
+def get_period():
+    now = datetime.datetime.now()
+
+    morning_start = now.replace(hour=11, minute=0, second=0, microsecond=0)
+    morning_end   = morning_start + datetime.timedelta(minutes=WINDOW_MINUTES)
+
+    night_start = now.replace(hour=23, minute=0, second=0, microsecond=0)
+    night_end   = night_start + datetime.timedelta(minutes=WINDOW_MINUTES)
+
+    if morning_start <= now <= morning_end:
+        return "morning"
+
+    if night_start <= now <= night_end:
+        return "night"
+
+    return None
 
 IMAGE_DIR = "images"
 DATA_DIR = "data"
@@ -62,18 +82,6 @@ os.makedirs(DATA_DIR, exist_ok=True)
 def today():
     return datetime.date.today()
 
-def is_time_between(start):
-    now = datetime.datetime.now()
-    start_dt = datetime.datetime.combine(now.date(), start)
-    end_dt = start_dt + datetime.timedelta(minutes=REQUIRED_MINUTES)
-    return start_dt <= now <= end_dt
-
-def get_period():
-    if is_time_between(MORNING_START):
-        return "morning"
-    if is_time_between(NIGHT_START):
-        return "night"
-    return None
 
 # =====================
 # スタンプ記録
@@ -331,6 +339,29 @@ async def rnm(interaction: discord.Interaction):
 # 起動
 # =====================
 @bot.event
+async def on_voice_state_update(member, before, after):
+    # 指定VCに入室
+    if after.channel and after.channel.id == TARGET_VC_ID and before.channel != after.channel:
+        join_times[member.id] = datetime.datetime.now()
+        return
+
+    # 指定VCから退出
+    if before.channel and before.channel.id == TARGET_VC_ID and after.channel != before.channel:
+        start = join_times.pop(member.id, None)
+        if not start:
+            return
+
+        stayed_minutes = (datetime.datetime.now() - start).total_seconds() / 60
+        if stayed_minutes < REQUIRED_MINUTES:
+            return
+
+        period = get_period()
+        if not period:
+            return
+
+        record_stamp(member.id, period)
+
+@bot.event
 async def setup_hook():
     guild = discord.Object(id=GUILD_ID)
 
@@ -349,9 +380,4 @@ async def setup_hook():
 if __name__ == "__main__":
     threading.Thread(target=start_server, daemon=True).start()
     bot.run(TOKEN)
-
-
-
-
-
 
