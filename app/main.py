@@ -54,6 +54,7 @@ def start_server():
 REQUIRED_MINUTES = 6
 WINDOW_MINUTES = 15
 
+STAMP_NOTIFY_CHANNEL_ID = 1448494342527258788  # ← 通知したいテキストチャンネルID
 TARGET_VC_ID = 1420270687356190810  # ← 指定VCのID
 
 def get_period():
@@ -366,6 +367,7 @@ async def on_voice_state_update(member, before, after):
     success = record_stamp(member.id, period)
     if success:
         await notify_stamp_success(bot, member, period)
+
 
 
 async def notify_stamp_success(bot, member, period):
