@@ -21,7 +21,9 @@ SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 GUILD_ID = int(os.getenv("GUILD_ID"))
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-join_times = {}  # { user_id: datetime }
+join_times = {}
+# { user_id: (join_time, period) }
+
 
 
 # =====================
@@ -342,24 +344,43 @@ async def rnm(interaction: discord.Interaction):
 async def on_voice_state_update(member, before, after):
     # 指定VCに入室
     if after.channel and after.channel.id == TARGET_VC_ID and before.channel != after.channel:
-        join_times[member.id] = datetime.datetime.now()
-        return
-
-    # 指定VCから退出
-    if before.channel and before.channel.id == TARGET_VC_ID and after.channel != before.channel:
-        start = join_times.pop(member.id, None)
-        if not start:
-            return
-
-        stayed_minutes = (datetime.datetime.now() - start).total_seconds() / 60
-        if stayed_minutes < REQUIRED_MINUTES:
-            return
-
         period = get_period()
         if not period:
             return
 
-        record_stamp(member.id, period)
+        join_times[member.id] = (datetime.datetime.now(), period)
+        return
+
+    # 指定VCから退出
+    if before.channel and before.channel.id == TARGET_VC_ID and after.channel != before.channel:
+        data = join_times.pop(member.id, None)
+    if not data:
+        return
+
+    start, period = data
+
+    stayed_minutes = (datetime.datetime.now() - start).total_seconds() / 60
+    if stayed_minutes < REQUIRED_MINUTES:
+        return
+
+    success = record_stamp(member.id, period)
+    if success:
+        await notify_stamp_success(bot, member, period)
+
+
+async def notify_stamp_success(bot, member, period):
+    channel = bot.get_channel(STAMP_NOTIFY_CHANNEL_ID)
+    if not channel:
+        return
+
+    label = "🌅 朝" if period == "morning" else "🌙 夜"
+
+    await channel.send(
+        f"🎉 **スタンプ獲得！**\n"
+        f"{label}の部\n"
+        f"👤 {member.mention}"
+    )
+
 
 @bot.event
 async def setup_hook():
@@ -380,4 +401,5 @@ async def setup_hook():
 if __name__ == "__main__":
     threading.Thread(target=start_server, daemon=True).start()
     bot.run(TOKEN)
+
 
