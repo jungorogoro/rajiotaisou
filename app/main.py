@@ -21,8 +21,9 @@ SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 GUILD_ID = int(os.getenv("GUILD_ID"))
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-join_times = {}
-# { user_id: (join_time, period) }
+join_times = {}  
+# { user_id: {"start": datetime, "period": "morning" | "night"} }
+
 
 
 
@@ -343,30 +344,53 @@ async def rnm(interaction: discord.Interaction):
 # =====================
 @bot.event
 async def on_voice_state_update(member, before, after):
-    # 指定VCに入室
-    if after.channel and after.channel.id == TARGET_VC_ID and before.channel != after.channel:
+    # 指定VCに入室した瞬間
+    if (
+        after.channel
+        and after.channel.id == TARGET_VC_ID
+        and before.channel != after.channel
+    ):
         period = get_period()
         if not period:
             return
 
-        join_times[member.id] = (datetime.datetime.now(), period)
-        return
+        join_times[member.id] = {
+            "start": datetime.datetime.now(),
+            "period": period
+        }
 
-    # 指定VCから退出
-    if before.channel and before.channel.id == TARGET_VC_ID and after.channel != before.channel:
-        data = join_times.pop(member.id, None)
-    if not data:
-        return
+from discord.ext import tasks
 
-    start, period = data
+@tasks.loop(seconds=30)
+async def check_stay_time():
+    now = datetime.datetime.now()
+    finished = []
 
-    stayed_minutes = (datetime.datetime.now() - start).total_seconds() / 60
-    if stayed_minutes < REQUIRED_MINUTES:
-        return
+    for user_id, info in join_times.items():
+        stayed_minutes = (now - info["start"]).total_seconds() / 60
 
-    success = record_stamp(member.id, period)
-    if success:
-        await notify_stamp_success(bot, member, period)
+        if stayed_minutes < REQUIRED_MINUTES:
+            continue
+
+        success = record_stamp(user_id, info["period"])
+        if not success:
+            finished.append(user_id)
+            continue
+
+        guild = bot.get_guild(GUILD_ID)
+        if not guild:
+            finished.append(user_id)
+            continue
+
+        member = guild.get_member(user_id)
+        if member:
+            await notify_stamp_success(bot, member, info["period"])
+
+        finished.append(user_id)
+
+    for uid in finished:
+        join_times.pop(uid, None)
+
 
 
 
@@ -382,6 +406,12 @@ async def notify_stamp_success(bot, member, period):
         f"{label}の部\n"
         f"👤 {member.mention}"
     )
+
+@bot.event
+async def on_ready():
+    if not check_stay_time.is_running():
+        check_stay_time.start()
+
 
 
 @bot.event
