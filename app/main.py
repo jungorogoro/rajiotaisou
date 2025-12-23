@@ -344,53 +344,61 @@ async def rnm(interaction: discord.Interaction):
 # =====================
 @bot.event
 async def on_voice_state_update(member, before, after):
-    # 指定VCに入室した瞬間
-    if (
-        after.channel
-        and after.channel.id == TARGET_VC_ID
-        and before.channel != after.channel
-    ):
-        period = get_period()
-        if not period:
+    # Bot自身は無視
+    if member.bot:
+        return
+
+    now = datetime.datetime.now()
+    period = get_period()
+    if not period:
+        return
+
+    key = (member.id, period, today())
+
+    guild = member.guild
+    notify_channel = guild.get_channel(NOTIFY_CHANNEL_ID)
+
+    # ===== VCに入室 =====
+    if after.channel and after.channel.id == TARGET_VC_ID:
+        join_times[member.id] = now
+        return
+
+    # ===== VC滞在中（退出していなくても判定）=====
+    if member.id in join_times:
+        start = join_times[member.id]
+        stayed_minutes = (now - start).total_seconds() / 60
+
+        # 6分未満なら何もしない
+        if stayed_minutes < REQUIRED_MINUTES:
             return
 
-        join_times[member.id] = {
-            "start": datetime.datetime.now(),
-            "period": period
-        }
+        # すでにこの時間帯で押していたら何もしない
+        if key in stamped_users:
+            return
 
-from discord.ext import tasks
-
-@tasks.loop(seconds=30)
-async def check_stay_time():
-    now = datetime.datetime.now()
-    finished = []
-
-    for user_id, info in join_times.items():
-        stayed_minutes = (now - info["start"]).total_seconds() / 60
-
-        if stayed_minutes < REQUIRED_MINUTES:
-            continue
-
-        success = record_stamp(user_id, info["period"])
+        # DB登録
+        success = record_stamp(member.id, period)
         if not success:
-            finished.append(user_id)
-            continue
+            stamped_users.add(key)
+            return
 
-        guild = bot.get_guild(GUILD_ID)
-        if not guild:
-            finished.append(user_id)
-            continue
+        stamped_users.add(key)
 
-        member = guild.get_member(user_id)
-        if member:
-            await notify_stamp_success(bot, member, info["period"])
+        # ===== 通知 =====
+        label = "🌅 朝" if period == "morning" else "🌙 夜"
+        mention = user_mention(member.id)
 
-        finished.append(user_id)
+        if notify_channel:
+            await notify_channel.send(
+                f"{mention} {label}のスタンプを獲得しました！🎉",
+                allowed_mentions=AllowedMentions(users=True)
+            )
 
-    for uid in finished:
-        join_times.pop(uid, None)
+        return
 
+    # ===== VCから退出 =====
+    if before.channel and before.channel.id == TARGET_VC_ID:
+        join_times.pop(member.id, None)
 
 
 
@@ -433,5 +441,6 @@ async def setup_hook():
 if __name__ == "__main__":
     threading.Thread(target=start_server, daemon=True).start()
     bot.run(TOKEN)
+
 
 
