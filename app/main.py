@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 from supabase import create_client
 from PIL import Image
 from fastapi import FastAPI
+from discord import AllowedMentions
 import threading
 import uvicorn
 
@@ -23,7 +24,8 @@ GUILD_ID = int(os.getenv("GUILD_ID"))
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 join_times = {}  
 # { user_id: {"start": datetime, "period": "morning" | "night"} }
-
+stamped_users = set()
+# key = (user_id, period, date)
 
 
 
@@ -390,8 +392,8 @@ async def on_voice_state_update(member, before, after):
 
         if notify_channel:
             await notify_channel.send(
-                f"{mention} {label}のスタンプを獲得しました！🎉",
-                allowed_mentions=AllowedMentions(users=True)
+               f"{member.mention} {label}のスタンプを獲得しました！🎉",
+               allowed_mentions=discord.AllowedMentions(users=True)
             )
 
         return
@@ -415,12 +417,6 @@ async def notify_stamp_success(bot, member, period):
         f"👤 {member.mention}"
     )
 
-@bot.event
-async def on_ready():
-    if not check_stay_time.is_running():
-        check_stay_time.start()
-
-
 
 @bot.event
 async def setup_hook():
@@ -441,6 +437,7 @@ async def setup_hook():
 if __name__ == "__main__":
     threading.Thread(target=start_server, daemon=True).start()
     bot.run(TOKEN)
+
 
 
 
