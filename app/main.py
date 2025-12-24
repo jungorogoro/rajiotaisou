@@ -358,7 +358,7 @@ async def on_voice_state_update(member, before, after):
     key = (member.id, period, today())
 
     guild = member.guild
-    notify_channel = guild.get_channel(NOTIFY_CHANNEL_ID)
+    notify_channel = guild.get_channel(STAMP_NOTIFY_CHANNEL_ID)
 
     # ===== VCに入室 =====
     if after.channel and after.channel.id == TARGET_VC_ID:
@@ -437,6 +437,7 @@ async def setup_hook():
 if __name__ == "__main__":
     threading.Thread(target=start_server, daemon=True).start()
     bot.run(TOKEN)
+
 
 
 
