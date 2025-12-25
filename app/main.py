@@ -22,8 +22,14 @@ SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 GUILD_ID = int(os.getenv("GUILD_ID"))
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-join_times = {}  
-# { user_id: {"start": datetime, "period": "morning" | "night"} }
+
+REQUIRED_SECONDS = 6 * 60
+VC_MONITOR_BEFORE_MIN = 20
+vc_sessions = {}
+
+stamped_users = set()  # (user_id, period, date)
+
+
 stamped_users = set()
 # key = (user_id, period, date)
 
@@ -88,6 +94,28 @@ os.makedirs(DATA_DIR, exist_ok=True)
 def today():
     return datetime.date.today()
 
+def get_period_window(now: datetime.datetime):
+    today_date = now.date()
+
+    morning = {
+        "period": "morning",
+        "monitor": datetime.datetime.combine(today_date, datetime.time(10, 40)),
+        "start": datetime.datetime.combine(today_date, datetime.time(11, 0)),
+        "end": datetime.datetime.combine(today_date, datetime.time(11, 15)),
+    }
+
+    night = {
+        "period": "night",
+        "monitor": datetime.datetime.combine(today_date, datetime.time(22, 40)),
+        "start": datetime.datetime.combine(today_date, datetime.time(23, 0)),
+        "end": datetime.datetime.combine(today_date, datetime.time(23, 15)),
+    }
+
+    for w in (morning, night):
+        if w["monitor"] <= now <= w["end"]:
+            return w
+
+    return None
 
 # =====================
 # スタンプ記録
@@ -346,61 +374,63 @@ async def rnm(interaction: discord.Interaction):
 # =====================
 @bot.event
 async def on_voice_state_update(member, before, after):
-    # Bot自身は無視
     if member.bot:
         return
 
     now = datetime.datetime.now()
-    period = get_period()
-    if not period:
+    window = get_period_window(now)
+    if not window:
         return
+
+    period = window["period"]
+    end_time = window["end"]
 
     key = (member.id, period, today())
+    if key in stamped_users:
+        return
 
-    guild = member.guild
-    notify_channel = guild.get_channel(STAMP_NOTIFY_CHANNEL_ID)
-
-    # ===== VCに入室 =====
+    # ===== VC入室 =====
     if after.channel and after.channel.id == TARGET_VC_ID:
-        join_times[member.id] = now
+        session = vc_sessions.get(member.id)
+
+        if not session:
+            vc_sessions[member.id] = {
+                "period": period,
+                "total": 0,
+                "last_join": now
+            }
         return
 
-    # ===== VC滞在中（退出していなくても判定）=====
-    if member.id in join_times:
-        start = join_times[member.id]
-        stayed_minutes = (now - start).total_seconds() / 60
-
-        # 6分未満なら何もしない
-        if stayed_minutes < REQUIRED_MINUTES:
-            return
-
-        # すでにこの時間帯で押していたら何もしない
-        if key in stamped_users:
-            return
-
-        # DB登録
-        success = record_stamp(member.id, period)
-        if not success:
-            stamped_users.add(key)
-            return
-
-        stamped_users.add(key)
-
-        # ===== 通知 =====
-        label = "🌅 朝" if period == "morning" else "🌙 夜"
-        mention = user_mention(member.id)
-
-        if notify_channel:
-            await notify_channel.send(
-               f"{member.mention} {label}のスタンプを獲得しました！🎉",
-               allowed_mentions=discord.AllowedMentions(users=True)
-            )
-
-        return
-
-    # ===== VCから退出 =====
+    # ===== VC退出 or 移動 =====
     if before.channel and before.channel.id == TARGET_VC_ID:
-        join_times.pop(member.id, None)
+        session = vc_sessions.get(member.id)
+        if not session:
+            return
+
+        stay_until = min(now, end_time)
+        delta = (stay_until - session["last_join"]).total_seconds()
+        if delta > 0:
+            session["total"] += delta
+
+        # ===== 6分達成 =====
+        if session["total"] >= REQUIRED_SECONDS:
+            success = record_stamp(member.id, period)
+            stamped_users.add(key)
+
+            guild = member.guild
+            notify_channel = guild.get_channel(STAMP_NOTIFY_CHANNEL_ID)
+
+            if success and notify_channel:
+                label = "🌅 朝" if period == "morning" else "🌙 夜"
+                await notify_channel.send(
+                    f"{member.mention} {label}のスタンプを獲得しました！🎉",
+                    allowed_mentions=AllowedMentions(users=True)
+                )
+
+            vc_sessions.pop(member.id, None)
+            return
+
+        session["last_join"] = now
 
 
 
@@ -437,7 +467,6 @@ async def setup_hook():
 if __name__ == "__main__":
     threading.Thread(target=start_server, daemon=True).start()
     bot.run(TOKEN)
-
 
 
 
