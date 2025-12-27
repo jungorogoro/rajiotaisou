@@ -1,13 +1,10 @@
 discord.py==2.3.2
 python-dotenv==1.0.1
 
-supabase==2.4.0
+supabase
 gotrue==2.9.0
-
-# ★ ここが正解ライン
-httpx==0.25.2
-
 Pillow==10.4.0
 fastapi==0.115.0
 uvicorn[standard]==0.30.6
+
 
