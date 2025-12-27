@@ -1,530 +1,570 @@
 import os
-import datetime
-import threading
+import asyncio
+from datetime import datetime, timedelta, date, time
+from io import BytesIO
+from typing import Dict, Optional, List, Tuple
 
 import discord
-from discord import app_commands, AllowedMentions
 from discord.ext import commands, tasks
-
 from dotenv import load_dotenv
-from supabase import create_client
+from supabase import create_client, Client
 from PIL import Image
-from fastapi import FastAPI
-import uvicorn
 
-# =====================
-# 環境変数
-# =====================
+from app.date.calendar_utils import get_day_position
+
+# .env 読み込み
 load_dotenv()
 
-TOKEN = os.getenv("DISCORD_TOKEN")
+DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-GUILD_ID = int(os.getenv("GUILD_ID"))
 
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+if not DISCORD_TOKEN:
+    raise RuntimeError("環境変数 DISCORD_TOKEN が設定されていません")
+if not SUPABASE_URL or not SUPABASE_KEY:
+    raise RuntimeError("Supabase の URL / KEY が設定されていません")
 
-# =====================
-# 設定
-# =====================
-REQUIRED_MINUTES = 6
-REQUIRED_SECONDS = REQUIRED_MINUTES * 60
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-WINDOW_MINUTES = 15
-
-STAMP_NOTIFY_CHANNEL_ID = 1448494342527258788  # 通知テキストチャンネルID
-TARGET_VC_ID = 1420270687356190810             # 対象VC ID
-
-IMAGE_DIR = "images"
-DATA_DIR = "data"
-
-os.makedirs(DATA_DIR, exist_ok=True)
-
-# VCセッション情報
-# vc_sessions[user_id] = {
-#   "period": "morning" / "night",
-#   "total": float(滞在秒数),
-#   "last_join": datetime,
-#   "date": date
-# }
-vc_sessions = {}
-
-# その日のスタンプ済ユーザー
-# key = (user_id, period, date)
-stamped_users = set()
-
-# 日付リセット用
-_last_reset_date = datetime.date.today()
-
-# =====================
-# Discord Bot
-# =====================
+# Intents 設定（ボイス状態とメンバー情報が必要）
 intents = discord.Intents.default()
-intents.voice_states = True
-intents.guilds = True
+intents.message_content = False
 intents.members = True
+intents.voice_states = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# =====================
-# FastAPI (Koyeb用)
-# =====================
-app = FastAPI()
+# ====== データモデル（メモリ上の一時状態） ======
 
-@app.get("/")
-def root():
-    return {"status": "ok"}
+class ClubConfig:
+    def __init__(
+        self,
+        club_id: str,
+        name: str,
+        guild_id: int,
+        voice_channel_id: int,
+        start_time: time,
+        window_minutes: int,
+        required_minutes: int,
+        monitor_offset_minutes: int,
+        calendar_base_prefix: str,
+        is_night: bool,
+    ):
+        self.club_id = club_id
+        self.name = name
+        self.guild_id = guild_id
+        self.voice_channel_id = voice_channel_id
+        self.start_time = start_time
+        self.window_minutes = window_minutes
+        self.required_minutes = required_minutes
+        self.monitor_offset_minutes = monitor_offset_minutes
+        self.calendar_base_prefix = calendar_base_prefix
+        self.is_night = is_night
 
-def start_server():
-    uvicorn.run(app, host="0.0.0.0", port=8080)
+    @property
+    def window_timedelta(self) -> timedelta:
+        return timedelta(minutes=self.window_minutes)
 
-# =====================
-# 共通関数
-# =====================
-def today():
-    return datetime.date.today()
+    @property
+    def required_timedelta(self) -> timedelta:
+        return timedelta(minutes=self.required_minutes)
 
-def reset_daily_if_needed():
-    """日付が変わったら stamped_users / vc_sessions をリセット"""
-    global _last_reset_date, stamped_users, vc_sessions
-    now_date = today()
-    if now_date != _last_reset_date:
-        stamped_users.clear()
-        vc_sessions.clear()
-        _last_reset_date = now_date
+    @property
+    def monitor_offset_timedelta(self) -> timedelta:
+        return timedelta(minutes=self.monitor_offset_minutes)
 
 
-def get_period_window(now: datetime.datetime):
-    """監視ウィンドウを返す
-    monitor: 監視開始 (11:00前に入ってる人の検知用)
-    start:   カウント開始 (ここ以降の時間だけカウント)
-    end:     判定終了
+# ギルドごとのClub設定をキャッシュ
+club_cache: Dict[int, Dict[str, ClubConfig]] = {}  # guild_id -> {club_name: ClubConfig}
+
+# VC滞在の一時集計（通信量削減のため、こまめにDBには書かず、しきい値到達時に書き込む）
+# key: (guild_id, club_id, user_id, date) -> accumulated seconds within window
+presence_accumulator: Dict[Tuple[int, str, int, date], int] = {}
+
+
+# ====== Supabase helper ======
+
+async def load_clubs_for_guild(guild_id: int):
+    """Supabase から指定ギルドのクラブ設定を読み込んでキャッシュする"""
+    res = supabase.table("clubs").select("*").eq("guild_id", guild_id).execute()
+    if res.error:
+        print("Error loading clubs:", res.error)
+        return
+
+    clubs_by_name: Dict[str, ClubConfig] = {}
+    for row in res.data:
+        club_cfg = ClubConfig(
+            club_id=row["id"],
+            name=row["name"],
+            guild_id=row["guild_id"],
+            voice_channel_id=row["voice_channel_id"],
+            start_time=datetime.strptime(row["start_time"], "%H:%M:%S").time(),
+            window_minutes=row["window_minutes"],
+            required_minutes=row["required_minutes"],
+            monitor_offset_minutes=row["monitor_offset_minutes"],
+            calendar_base_prefix=row["calendar_base_prefix"],
+            is_night=row["is_night"],
+        )
+        clubs_by_name[club_cfg.name] = club_cfg
+
+    club_cache[guild_id] = clubs_by_name
+
+
+async def get_or_load_club(guild_id: int, club_name: str) -> Optional[ClubConfig]:
+    if guild_id not in club_cache:
+        await load_clubs_for_guild(guild_id)
+    return club_cache.get(guild_id, {}).get(club_name)
+
+
+async def add_club_to_db(
+    name: str,
+    guild_id: int,
+    voice_channel_id: int,
+    start_time_str: str,
+    calendar_base_prefix: str,
+    is_night: bool = False,
+    window_minutes: int = 15,
+    required_minutes: int = 6,
+    monitor_offset_minutes: int = 20,
+) -> ClubConfig:
+    # 既存チェック
+    res = supabase.table("clubs").select("*").eq("name", name).eq("guild_id", guild_id).execute()
+    if res.data:
+        raise ValueError("同じ名前の部活がすでに登録されています")
+
+    start_t = datetime.strptime(start_time_str, "%H:%M").time()
+
+    insert_res = (
+        supabase.table("clubs")
+        .insert(
+            {
+                "name": name,
+                "guild_id": guild_id,
+                "voice_channel_id": voice_channel_id,
+                "start_time": start_time_str + ":00",
+                "window_minutes": window_minutes,
+                "required_minutes": required_minutes,
+                "monitor_offset_minutes": monitor_offset_minutes,
+                "calendar_base_prefix": calendar_base_prefix,
+                "is_night": is_night,
+            }
+        )
+        .execute()
+    )
+    if insert_res.error:
+        raise RuntimeError(f"Supabase insert error: {insert_res.error}")
+
+    row = insert_res.data[0]
+    cfg = ClubConfig(
+        club_id=row["id"],
+        name=row["name"],
+        guild_id=row["guild_id"],
+        voice_channel_id=row["voice_channel_id"],
+        start_time=start_t,
+        window_minutes=row["window_minutes"],
+        required_minutes=row["required_minutes"],
+        monitor_offset_minutes=row["monitor_offset_minutes"],
+        calendar_base_prefix=row["calendar_base_prefix"],
+        is_night=row["is_night"],
+    )
+
+    if guild_id not in club_cache:
+        club_cache[guild_id] = {}
+    club_cache[guild_id][cfg.name] = cfg
+    return cfg
+
+
+async def record_stamp_if_needed(
+    club: ClubConfig,
+    user_id: int,
+    date_obj: date,
+    seconds_in_window: int,
+):
     """
-    today_date = now.date()
+    その日の必要時間を超えていたら stamps に書き込み。
+    すでにスタンプ済みなら何もしない。
+    """
+    if seconds_in_window < int(club.required_timedelta.total_seconds()):
+        return
 
-    morning = {
-        "period": "morning",
-        "monitor": datetime.datetime.combine(today_date, datetime.time(10, 40)),
-        "start":   datetime.datetime.combine(today_date, datetime.time(11, 0)),
-        "end":     datetime.datetime.combine(today_date, datetime.time(11, 15)),
-    }
-
-    night = {
-        "period": "night",
-        "monitor": datetime.datetime.combine(today_date, datetime.time(22, 40)),
-        "start":   datetime.datetime.combine(today_date, datetime.time(23, 0)),
-        "end":     datetime.datetime.combine(today_date, datetime.time(23, 15)),
-    }
-
-    for w in (morning, night):
-        if w["monitor"] <= now <= w["end"]:
-            return w
-
-    return None
-
-# =====================
-# スタンプ記録
-# =====================
-def record_stamp(user_id: int, period: str):
-    exists = (
+    res = (
         supabase.table("stamps")
-        .select("id")
+        .select("*")
         .eq("user_id", user_id)
-        .eq("period", period)
-        .eq("stamp_date", today().isoformat())
+        .eq("guild_id", club.guild_id)
+        .eq("club_id", club.club_id)
+        .eq("date", date_obj.isoformat())
         .execute()
-        .data
     )
+    if res.data:
+        # すでにスタンプ済み
+        return
 
-    if exists:
-        return False
-
-    supabase.table("stamps").insert({
-        "user_id": user_id,
-        "stamp_date": today().isoformat(),
-        "period": period
-    }).execute()
-    return True
-
-# =====================
-# 統計計算
-# =====================
-def calc_stats(user_id: int, period: str):
-    rows = (
+    ins = (
         supabase.table("stamps")
-        .select("stamp_date")
-        .eq("user_id", user_id)
-        .eq("period", period)
+        .insert(
+            {
+                "user_id": user_id,
+                "guild_id": club.guild_id,
+                "club_id": club.club_id,
+                "date": date_obj.isoformat(),
+            }
+        )
         .execute()
-        .data
     )
+    if ins.error:
+        print("Error inserting stamp:", ins.error)
 
-    dates = sorted(
-        datetime.date.fromisoformat(r["stamp_date"]) for r in rows
+
+async def get_stats_for_user(club: ClubConfig, user_id: int) -> Tuple[int, int, int]:
+    """
+    total_days, current_streak, max_streak を返す
+    """
+    res = (
+        supabase.table("stamps")
+        .select("date")
+        .eq("user_id", user_id)
+        .eq("guild_id", club.guild_id)
+        .eq("club_id", club.club_id)
+        .order("date", desc=False)
+        .execute()
     )
+    if res.error:
+        print("Error fetching stamps:", res.error)
+        return 0, 0, 0
+
+    dates = [datetime.strptime(r["date"], "%Y-%m-%d").date() for r in res.data]
+    if not dates:
+        return 0, 0, 0
 
     total = len(dates)
 
-    # 最大連続
-    max_streak = 0
-    streak = 0
-    prev = None
-
-    for d in dates:
-        if prev and (d - prev).days == 1:
-            streak += 1
+    # 連続日数と最大連続日数を計算
+    max_streak = 1
+    current_streak = 1
+    for i in range(1, len(dates)):
+        if dates[i] == dates[i - 1] + timedelta(days=1):
+            current_streak += 1
+            max_streak = max(max_streak, current_streak)
         else:
-            streak = 1
-        max_streak = max(max_streak, streak)
-        prev = d
+            current_streak = 1
 
-    # 現在連続
-    current_streak = 0
-    if dates:
-        current_streak = 1
-        for i in range(len(dates) - 1, 0, -1):
-            if (dates[i] - dates[i - 1]).days == 1:
-                current_streak += 1
-            else:
-                break
+    # 今日含めて現在連続かどうか
+    today = date.today()
+    # stamps の最後の日付から後ろをみて現在連続かを再計算
+    current = 1
+    for i in range(len(dates) - 1, 0, -1):
+        if dates[i] == dates[i - 1] + timedelta(days=1):
+            current += 1
+        else:
+            break
+    # ただし、最後の日付が今日でないなら連続は 0 にする
+    if dates[-1] != today:
+        current = 0
 
-    return total, current_streak, max_streak
+    return total, current, max_streak
 
-# =====================
-# カレンダー作成
-# =====================
-def find_calendar_image(period: str, ym: str):
-    # ファイル名を統一
-    if period == "morning":
-        name = f"calendar_base_{ym}.png"
+
+# ====== スタンプカード画像生成 ======
+
+def load_calendar_base_image(club: ClubConfig, target_date: date) -> Image.Image:
+    """
+    指定日のカレンダー画像ベースを読み込む。
+    ファイル名: images/calendar_base_yyyy_mm(.png or _n.png)
+    prefix で切り替え可能とする。
+    """
+    year = target_date.year
+    month = target_date.month
+
+    base_dir = os.path.join(os.path.dirname(__file__), "images")
+
+    # ベース名（例）: calendar_base_2025_01.png / calendar_base_2025_01_n.png
+    if club.is_night:
+        filename = f"{club.calendar_base_prefix}_{year}_{month:02d}_n.png"
     else:
-        name = f"calendar_nt_base_{ym}.png"
+        filename = f"{club.calendar_base_prefix}_{year}_{month:02d}.png"
 
-    path = os.path.join(IMAGE_DIR, name)
-    if os.path.exists(path):
-        return path
+    path = os.path.join(base_dir, filename)
 
-    # なければ最新の画像を使う（すべての calendar_*.png を候補に）
-    files = sorted(
-        f for f in os.listdir(IMAGE_DIR)
-        if f.startswith("calendar_") and f.endswith(".png")
-    )
-    if not files:
-        raise FileNotFoundError("カレンダー画像がありません")
+    if not os.path.exists(path):
+        # デフォルト名 fallback
+        if club.is_night:
+            default_name = f"calendar_base_{year}_{month:02d}_n.png"
+        else:
+            default_name = f"calendar_base_{year}_{month:02d}.png"
+        path = os.path.join(base_dir, default_name)
 
-    return os.path.join(IMAGE_DIR, files[-1])
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"カレンダーベース画像が見つかりません: {path}")
+
+    img = Image.open(path).convert("RGBA")
+    return img
 
 
-def create_calendar(user_id: int, period: str):
-    now = datetime.date.today()
-    ym = now.strftime("%Y_%m")
+def apply_stamps_to_calendar(
+    club: ClubConfig,
+    target_month: date,
+    stamp_dates: List[date],
+) -> BytesIO:
+    """
+    指定monthのカレンダーに stamp_dates の日日付にスタンプを押した画像を生成し、BytesIO を返す。
+    """
+    img = load_calendar_base_image(club, target_month)
+    base_dir = os.path.join(os.path.dirname(__file__), "images")
+    stamp_path = os.path.join(base_dir, "stamp.png")
+    if not os.path.exists(stamp_path):
+        raise FileNotFoundError(f"スタンプ画像が見つかりません: {stamp_path}")
 
-    base_path = find_calendar_image(period, ym)
-    output_path = os.path.join(DATA_DIR, f"{user_id}_{period}_{ym}.png")
+    stamp_img = Image.open(stamp_path).convert("RGBA")
 
-    img = Image.open(base_path).convert("RGBA")
+    for d in stamp_dates:
+        if d.year == target_month.year and d.month == target_month.month:
+            x, y = get_day_position(d)
+            img.alpha_composite(stamp_img, dest=(x, y))
 
-    rows = (
+    buf = BytesIO()
+    buf.name = "stamp_calendar.png"
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    return buf
+
+
+async def get_stamp_dates_for_month(club: ClubConfig, user_id: int, month_date: date) -> List[date]:
+    start_d = date(month_date.year, month_date.month, 1)
+    if month_date.month == 12:
+        end_d = date(month_date.year + 1, 1, 1)
+    else:
+        end_d = date(month_date.year, month_date.month + 1, 1)
+
+    res = (
         supabase.table("stamps")
-        .select("stamp_date")
+        .select("date")
         .eq("user_id", user_id)
-        .eq("period", period)
+        .eq("guild_id", club.guild_id)
+        .eq("club_id", club.club_id)
+        .gte("date", start_d.isoformat())
+        .lt("date", end_d.isoformat())
+        .order("date", desc=False)
         .execute()
-        .data
     )
+    if res.error:
+        print("Error fetching stamp dates:", res.error)
+        return []
 
-    # ===== 設定 =====
-    CELL_W = 320
-    CELL_H = 265
-    STAMP_SIZE = 250
-    START_X = 155
-    START_Y = 395
+    return [datetime.strptime(r["date"], "%Y-%m-%d").date() for r in res.data]
 
-    # スタンプ画像
-    stamp_img = Image.open(
-        os.path.join(IMAGE_DIR, "stamp.png")
-    ).convert("RGBA")
 
-    stamp_img = stamp_img.resize(
-        (STAMP_SIZE, STAMP_SIZE),
-        Image.Resampling.LANCZOS
-    )
+# ====== VC監視ロジック ======
 
-    # 月初の曜日
-    first_day = datetime.date(now.year, now.month, 1)
-    first_weekday = first_day.weekday()      # 月曜=0
-    start_col = (first_weekday + 1) % 7      # 日曜始まり
+def get_today_window_range(club: ClubConfig, tz: Optional[datetime.tzinfo] = None) -> Tuple[datetime, datetime]:
+    """
+    今日の club の「判定窓」の開始と終了 (datetime) を返す。
+    offset は「監視開始」のために別管理で使う。
+    """
+    now = datetime.now(tz=tz)
+    start_dt = datetime.combine(now.date(), club.start_time).replace(tzinfo=now.tzinfo)
+    end_dt = start_dt + club.window_timedelta
+    return start_dt, end_dt
 
-    # ===== スタンプ配置 =====
-    for r in rows:
-        d = datetime.date.fromisoformat(r["stamp_date"])
 
-        if d.year != now.year or d.month != now.month:
-            continue
+def get_today_monitor_range(club: ClubConfig, tz: Optional[datetime.tzinfo] = None) -> Tuple[datetime, datetime]:
+    """
+    今日の「監視開始～終了」の範囲を返す。
+    （例）11:00開始で offset=20, window=15 の場合
+      監視: 10:40～11:15
+    """
+    start_window, end_window = get_today_window_range(club, tz=tz)
+    monitor_start = start_window - club.monitor_offset_timedelta
+    monitor_end = end_window
+    return monitor_start, monitor_end
 
-        index = start_col + (d.day - 1)
-        col = index % 7
-        row = index // 7
 
-        x = START_X + col * CELL_W
-        y = START_Y + row * CELL_H
+@bot.event
+async def on_ready():
+    print(f"Logged in as {bot.user} (ID: {bot.user.id})")
+    # 全ギルドのクラブ設定をプリロード
+    for guild in bot.guilds:
+        await load_clubs_for_guild(guild.id)
+    print("Club configs loaded.")
+    presence_checker.start()
 
-        x_center = x + (CELL_W - STAMP_SIZE) // 2
-        y_center = y + (CELL_H - STAMP_SIZE) // 2
 
-        img.paste(stamp_img, (x_center, y_center), stamp_img)
+def get_club_for_voice_channel(guild_id: int, channel_id: int) -> List[ClubConfig]:
+    """
+    そのVCを監視対象にしているクラブを返す（複数の可能性もあるのでリスト）
+    """
+    clubs = club_cache.get(guild_id, {})
+    result = []
+    for cfg in clubs.values():
+        if cfg.voice_channel_id == channel_id:
+            result.append(cfg)
+    return result
 
-    img.save(output_path)
-    return output_path
 
-# =====================
-# スタンプコマンド
-# =====================
-async def send_stamp(interaction: discord.Interaction, period: str):
-    await interaction.response.defer(thinking=True)
-
-    user_id = interaction.user.id
-
-    total, current, max_streak = calc_stats(user_id, period)
-    img_path = create_calendar(user_id, period)
-
-    label = "🌅 朝" if period == "morning" else "🌙 夜"
-
-    text = (
-        f"{label}の参加記録\n"
-        f"✅ 総参加日数：{total}日\n"
-        f"🔥 連続参加中：{current}日\n"
-        f"🏆 最多連続：{max_streak}日"
-    )
-
-    await interaction.followup.send(
-        content=text,
-        file=discord.File(img_path)
-    )
-
-@bot.tree.command(
-    name="stamp_m",
-    description="朝のスタンプカードと参加記録を表示"
-)
-async def stamp_m(interaction: discord.Interaction):
-    await send_stamp(interaction, "morning")
-
-@bot.tree.command(
-    name="stamp_n",
-    description="夜のスタンプカードと参加記録を表示"
-)
-async def stamp_n(interaction: discord.Interaction):
-    await send_stamp(interaction, "night")
-
-# =====================
-# ランキング
-# =====================
-def get_ranking(period: str, month_only=False):
-    q = supabase.table("stamps").select("user_id, stamp_date").eq("period", period)
-    if month_only:
-        first = today().replace(day=1).isoformat()
-        q = q.gte("stamp_date", first)
-
-    rows = q.execute().data
-    scores = {}
-    for r in rows:
-        scores[r["user_id"]] = scores.get(r["user_id"], 0) + 1
-
-    return sorted(scores.items(), key=lambda x: x[1], reverse=True)[:10]
-
-def ranking_text(title, data):
-    msg = f"🏆 **{title}**\n"
-    for i, (u, c) in enumerate(data, 1):
-        msg += f"{i}位 <@{u}> {c}回\n"
-    return msg
-
-@bot.tree.command(name="ranking_morning_total", description="朝のトータル参加ランキングを表示")
-async def rmt(interaction: discord.Interaction):
-    await interaction.response.send_message(
-        ranking_text("朝 トータル", get_ranking("morning"))
-    )
-
-@bot.tree.command(name="ranking_morning_month", description="朝の月間参加ランキングを表示")
-async def rmm(interaction: discord.Interaction):
-    await interaction.response.send_message(
-        ranking_text("朝 今月", get_ranking("morning", True))
-    )
-
-@bot.tree.command(name="ranking_night_total", description="夜のトータル参加ランキングを表示")
-async def rnt(interaction: discord.Interaction):
-    await interaction.response.send_message(
-        ranking_text("夜 トータル", get_ranking("night"))
-    )
-
-@bot.tree.command(name="ranking_night_month", description="夜の月間参加ランキングを表示")
-async def rnm(interaction: discord.Interaction):
-    await interaction.response.send_message(
-        ranking_text("夜 今月", get_ranking("night", True))
-    )
-
-# =====================
-# スタンプ通知（共通）
-# =====================
-async def notify_stamp_success(member: discord.Member, period: str):
-    channel = bot.get_channel(STAMP_NOTIFY_CHANNEL_ID)
-    if not channel:
-        return
-
-    label = "🌅 朝" if period == "morning" else "🌙 夜"
-
-    await channel.send(
-        f"{member.mention} {label}のスタンプを獲得しました！🎉",
-        allowed_mentions=AllowedMentions(users=True)
-    )
-
-# =====================
-# VC監視 & スタンプロジック
-# =====================
 @bot.event
 async def on_voice_state_update(member, before, after):
-    if member.bot:
-        return
+    """
+    VC入退室を検知して、監視時間内なら presence_accumulator に滞在時間を積算する。
+    ただし「リアルタイムで秒数カウント」するのではなく、
+    presence_checker で定期的に状態を確認してもよいが、
+    ここでは「join/leave と同時に時間を記録する」簡易方式は難しいため、
+    別アプローチをとる。
+    ----
+    通信量削減＆ロジック簡略化のため、
+    実際には periodic check（presence_checker）で
+    今 VC にいるユーザを見て、その時刻に応じて秒数加算する。
+    なので on_voice_state_update では何もしなくてもよいが、
+    将来の拡張のために置いておく。
+    """
+    return  # ここでは特に何もしない。すべて presence_checker に任せる。
 
-    reset_daily_if_needed()
 
-    now = datetime.datetime.now()
-    window = get_period_window(now)
-    if not window:
-        return
-
-    period = window["period"]
-    start_time = window["start"]
-    end_time = window["end"]
-
-    key_today = (member.id, period, today())
-
-    # すでにスタンプ済みなら何もしない
-    if key_today in stamped_users:
-        return
-
-    # ===== VC入室（対象VCに入ったとき） =====
-    if after.channel and after.channel.id == TARGET_VC_ID:
-        session = vc_sessions.get(member.id)
-
-        if not session or session.get("date") != today() or session.get("period") != period:
-            # 新しいセッションを開始
-            vc_sessions[member.id] = {
-                "period": period,
-                "total": 0.0,
-                "last_join": now,
-                "date": today(),
-            }
-        else:
-            # 同じ日・同じ部。再入室なので last_join を更新
-            session["last_join"] = now
-
-        return
-
-    # ===== VC退出 or 他チャンネルへ移動（対象VCから出たとき） =====
-    if before.channel and before.channel.id == TARGET_VC_ID:
-        session = vc_sessions.get(member.id)
-        if not session:
-            return
-
-        # この退出までの滞在時間をカウント（カウント時間帯に補正）
-        effective_join = max(session["last_join"], start_time)
-        effective_leave = min(now, end_time)
-
-        if effective_leave > effective_join:
-            delta = (effective_leave - effective_join).total_seconds()
-            session["total"] += delta
-
-        # 6分達成したか判定
-        if session["total"] >= REQUIRED_SECONDS:
-            if key_today not in stamped_users:
-                success = record_stamp(member.id, period)
-                stamped_users.add(key_today)
-
-                if success:
-                    await notify_stamp_success(member, period)
-
-        # 対象VCから出たのでセッションは終了
-        vc_sessions.pop(member.id, None)
-
-# =====================
-# 自動判定タスク（退出しなくてもスタンプを押す）
-# =====================
 @tasks.loop(seconds=30)
-async def check_auto_stamp():
-    reset_daily_if_needed()
+async def presence_checker():
+    """
+    30秒おきに全ギルドの対象VCを巡回し、
+    今いるメンバーを確認し、「今が監視範囲＆判定窓内」であれば
+    presence_accumulator に滞在時間を加算し、必要時間を超えたら stamps を付与する。
+    """
+    now = datetime.now()
 
-    now = datetime.datetime.now()
-    window = get_period_window(now)
-    if not window:
-        return
-
-    period = window["period"]
-    start_time = window["start"]
-    end_time = window["end"]
-
-    # 判定時間を過ぎたら、自動でその時点の滞在を締めて判定
-    if now < end_time:
-        return
-
-    guild = bot.get_guild(GUILD_ID)
-    if not guild:
-        return
-
-    # 辞書をコピーしてイテレート（中で pop するため）
-    for user_id, session in list(vc_sessions.items()):
-        # 他の日や他の部のセッションなら無視
-        if session.get("date") != today() or session.get("period") != period:
+    for guild in bot.guilds:
+        guild_clubs = club_cache.get(guild.id, {})
+        if not guild_clubs:
             continue
 
-        member = guild.get_member(user_id)
-        if not member:
-            vc_sessions.pop(user_id, None)
-            continue
+        for club in guild_clubs.values():
+            monitor_start, monitor_end = get_today_monitor_range(club, tz=now.tzinfo)
+            window_start, window_end = get_today_window_range(club, tz=now.tzinfo)
 
-        key_today = (user_id, period, today())
+            # 今日の監視時間外ならスキップ
+            if not (monitor_start <= now <= monitor_end):
+                continue
 
-        # すでにスタンプ済みならセッション削除だけ
-        if key_today in stamped_users:
-            vc_sessions.pop(user_id, None)
-            continue
+            # VC オブジェクト取得
+            channel = guild.get_channel(club.voice_channel_id)
+            if not isinstance(channel, discord.VoiceChannel):
+                continue
 
-        # 判定時間終了時点までの滞在を締める
-        effective_join = max(session["last_join"], start_time)
-        effective_leave = end_time
+            # VCに現在いるメンバー
+            members = channel.members
 
-        if effective_leave > effective_join:
-            delta = (effective_leave - effective_join).total_seconds()
-            session["total"] += delta
+            for member in members:
+                if member.bot:
+                    continue
+                # 判定窓内にいるときだけ滞在時間をカウント（「11時以前からいた」人も、
+                # 実際の必要時間カウントは 11:00〜11:15 の間とする）
+                if window_start <= now <= window_end:
+                    key_date = window_start.date()
+                    key = (guild.id, club.club_id, member.id, key_date)
+                    # 30秒ぶん加算
+                    presence_accumulator[key] = presence_accumulator.get(key, 0) + 30
 
-        # 6分達成していればスタンプ付与
-        if session["total"] >= REQUIRED_SECONDS:
-            success = record_stamp(user_id, period)
-            stamped_users.add(key_today)
+                    # 必要時間を超えたらスタンプ
+                    seconds = presence_accumulator[key]
+                    await record_stamp_if_needed(club, member.id, key_date, seconds)
 
-            if success:
-                await notify_stamp_success(member, period)
 
-        # 判定時間を過ぎたのでセッション終了
-        vc_sessions.pop(user_id, None)
+# ====== スラッシュコマンド ======
 
-# =====================
-# 起動時処理
-# =====================
-@bot.event
-async def setup_hook():
-    guild = discord.Object(id=GUILD_ID)
+@bot.tree.command(name="add_club", description="新しい部活(VC監視)設定を追加します")
+async def add_club(
+    interaction: discord.Interaction,
+    name: str,
+    voice_channel: discord.VoiceChannel,
+    start_time_str: str,
+    calendar_base_prefix: str,
+    is_night: bool = False,
+):
+    """
+    例: /add_club name:morning voice_channel:#朝活 start_time_str:11:00 calendar_base_prefix:calendar_base
+         is_night:false
+    """
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("このコマンドは管理者のみ使用できます。", ephemeral=True)
+        return
 
-    # ギルドコマンドを一度クリアしてから同期
-    bot.tree.clear_commands(guild=guild)
-    await bot.tree.sync(guild=guild)
-    print("✅ Guild slash commands RESET & synced")
+    try:
+        cfg = await add_club_to_db(
+            name=name,
+            guild_id=interaction.guild_id,
+            voice_channel_id=voice_channel.id,
+            start_time_str=start_time_str,
+            calendar_base_prefix=calendar_base_prefix,
+            is_night=is_night,
+        )
+    except ValueError as e:
+        await interaction.response.send_message(str(e), ephemeral=True)
+        return
+    except Exception as e:
+        await interaction.response.send_message(f"エラーが発生しました: {e}", ephemeral=True)
+        return
 
-    # 自動判定タスクを開始
-    check_auto_stamp.start()
+    await interaction.response.send_message(
+        f"部活 `{cfg.name}` を登録しました。\n"
+        f"開始時刻: {cfg.start_time.strftime('%H:%M')}\n"
+        f"VC: {voice_channel.mention}\n"
+        f"監視開始: 開始 {cfg.monitor_offset_minutes} 分前から\n"
+        f"判定窓: {cfg.window_minutes} 分 / 必要滞在: {cfg.required_minutes} 分\n"
+        f"カレンダーベース: {cfg.calendar_base_prefix} (night={cfg.is_night})"
+    )
 
-# =====================
-# メイン
-# =====================
+
+@bot.tree.command(name="card", description="スタンプカードを表示します")
+async def card(
+    interaction: discord.Interaction,
+    club_name: str,
+    member: Optional[discord.Member] = None,
+):
+    """
+    例: /card club_name:morning member:@自分
+    member 省略時は自分。
+    """
+    await interaction.response.defer()
+
+    if not member:
+        member = interaction.user
+
+    club = await get_or_load_club(interaction.guild_id, club_name)
+    if not club:
+        await interaction.followup.send("その名前の部活設定が見つかりません。", ephemeral=True)
+        return
+
+    # 今月のスタンプ日取得
+    today = date.today()
+    stamp_dates = await get_stamp_dates_for_month(club, member.id)
+
+    # カード画像生成
+    try:
+        buf = apply_stamps_to_calendar(club, today, stamp_dates)
+    except FileNotFoundError as e:
+        await interaction.followup.send(f"画像ファイルが見つかりません: {e}", ephemeral=True)
+        return
+
+    # 統計情報
+    total_days, current_streak, max_streak = await get_stats_for_user(club, member.id)
+
+    file = discord.File(buf, filename="stamp_card.png")
+    embed = discord.Embed(
+        title=f"{club.name} スタンプカード - {member.display_name}",
+        description=(
+            f"総参加日数: **{total_days}日**\n"
+            f"現在の連続参加日数: **{current_streak}日**\n"
+            f"最高連続参加日数: **{max_streak}日**"
+        ),
+        color=discord.Color.green(),
+    )
+    embed.set_image(url="attachment://stamp_card.png")
+    await interaction.followup.send(file=file, embed=embed)
+
+
+# ====== Bot 起動 ======
+
+async def main():
+    async with bot:
+        # スラッシュコマンドの同期
+        await bot.start(DISCORD_TOKEN)
+
+
 if __name__ == "__main__":
-    threading.Thread(target=start_server, daemon=True).start()
-    bot.run(TOKEN)
+    asyncio.run(main())
