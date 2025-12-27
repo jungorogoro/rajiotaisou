@@ -15,10 +15,7 @@ from app.date.calendar_utils import get_day_position
 import threading
 from app.server import run as run_server
 
-threading.Thread(
-    target=run_server,
-    daemon=True
-).start()
+
 
 # .env 読み込み
 load_dotenv()
@@ -37,6 +34,14 @@ if not GUILD_ID:
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 
+# Intents 設定（ボイス状態とメンバー情報が必要）
+intents = discord.Intents.default()
+intents.message_content = False
+intents.members = True
+intents.voice_states = True
+
+bot = commands.Bot(command_prefix="!", intents=intents)
+
 @bot.event
 async def on_ready():
     print("Bot ready")
@@ -47,14 +52,11 @@ async def on_ready():
 
     print("Commands cleared")
 
-
-# Intents 設定（ボイス状態とメンバー情報が必要）
-intents = discord.Intents.default()
-intents.message_content = False
-intents.members = True
-intents.voice_states = True
-
-bot = commands.Bot(command_prefix="!", intents=intents)
+# ====== サーバー 起動 ======
+threading.Thread(
+    target=run_server,
+    daemon=True
+).start()
 
 # ====== データモデル（メモリ上の一時状態） ======
 
@@ -592,6 +594,7 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
 
 
