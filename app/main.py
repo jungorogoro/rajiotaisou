@@ -32,8 +32,21 @@ if not DISCORD_TOKEN:
     raise RuntimeError("環境変数 DISCORD_TOKEN が設定されていません")
 if not SUPABASE_URL or not SUPABASE_KEY:
     raise RuntimeError("Supabase の URL / KEY が設定されていません")
-
+if not GUILD_ID:
+    raise RuntimeError("環境変数 GUILD_ID が設定されていません")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+
+@bot.event
+async def on_ready():
+    print("Bot ready")
+
+    # すべてのコマンドを削除
+    bot.tree.clear_commands(guild=None)
+    await bot.tree.sync()
+
+    print("Commands cleared")
+
 
 # Intents 設定（ボイス状態とメンバー情報が必要）
 intents = discord.Intents.default()
@@ -584,6 +597,7 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
 
 
