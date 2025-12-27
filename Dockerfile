@@ -14,9 +14,15 @@ COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
 # アプリ本体
-COPY app /app/app
+COPY app //app/
+
+# dataフォルダがないとエラーになるので作成
+RUN mkdir -p /app/data
+
+# ポート開放 (uvicornで指定したポート)
+EXPOSE 8080
 
 ENV PYTHONUNBUFFERED=1
 
 # Koyeb では Procfile でもよいが、ここでは main.py を直接起動
-CMD ["python", "-m", "app.main"]
+CMD ["python", "main.py"]
