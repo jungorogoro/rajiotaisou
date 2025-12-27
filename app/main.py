@@ -12,6 +12,14 @@ from PIL import Image
 
 from app.date.calendar_utils import get_day_position
 
+import threading
+from server import run as run_server
+
+threading.Thread(
+    target=run_server,
+    daemon=True
+).start()
+
 # .env 読み込み
 load_dotenv()
 
@@ -568,3 +576,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
