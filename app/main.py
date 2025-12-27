@@ -26,6 +26,7 @@ load_dotenv()
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+GUILD_ID = os.getenv("GUILD_ID")
 
 if not DISCORD_TOKEN:
     raise RuntimeError("環境変数 DISCORD_TOKEN が設定されていません")
@@ -80,6 +81,17 @@ class ClubConfig:
     @property
     def monitor_offset_timedelta(self) -> timedelta:
         return timedelta(minutes=self.monitor_offset_minutes)
+
+
+@bot.event
+async def on_ready():
+    print("Bot ready")
+
+    # すべてのコマンドを削除
+    bot.tree.clear_commands(guild=None)
+    await bot.tree.sync()
+
+    print("Commands cleared")
 
 
 # ギルドごとのClub設定をキャッシュ
@@ -576,5 +588,6 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
 
