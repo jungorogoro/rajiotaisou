@@ -1,8 +1,8 @@
-# server.py
 from fastapi import FastAPI
 
 app = FastAPI()
 
+
 @app.get("/")
 async def root():
-    return {"message": "Server is Online"}
+    return {"status": "ok", "message": "Discord stamp bot is running"}
