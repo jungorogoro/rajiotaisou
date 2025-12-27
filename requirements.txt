@@ -1,8 +1,1 @@
-discord.py
-python-dotenv
-Pillow
-pip
-uvicorn
-fastapi
-supabase
-
+-r app/requirements.txt
