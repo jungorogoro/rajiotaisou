@@ -82,16 +82,12 @@ class ClubConfig:
     def monitor_offset_timedelta(self) -> timedelta:
         return timedelta(minutes=self.monitor_offset_minutes)
 
+guild = discord.Object(id=GUILD_ID)
 
 @bot.event
 async def on_ready():
-    print("Bot ready")
-
-    # すべてのコマンドを削除
-    bot.tree.clear_commands(guild=None)
-    await bot.tree.sync()
-
-    print("Commands cleared")
+    await bot.tree.sync(guild=guild)
+    print("Guild commands synced")
 
 
 # ギルドごとのClub設定をキャッシュ
@@ -588,6 +584,7 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
 
 
