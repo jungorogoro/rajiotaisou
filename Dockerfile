@@ -1,31 +1,22 @@
-# 1. Python公式イメージを使う
 FROM python:3.11-slim
 
-# 2. 作業ディレクトリ
 WORKDIR /app
 
-# 更新・日本語化
-RUN apt-get update && apt-get -y install locales && apt-get -y upgrade && \
-	localedef -f UTF-8 -i ja_JP ja_JP.UTF-8
-ENV LANG ja_JP.UTF-8
-ENV LANGUAGE ja_JP:ja
-ENV LC_ALL ja_JP.UTF-8
-ENV TZ Asia/Tokyo
-ENV TERM xterm
+# システム依存ライブラリ（Pillow などに必要なもの）
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    libjpeg-dev \
+    zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
 
-# 3. 必要なファイルをコピー
-COPY requirements.txt /app/
-COPY app/ /app/
+# ルートの requirements をコピー
+COPY requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
 
-# 4. ライブラリのインストール
-RUN pip install --no-cache-dir -r requirements.txt
+# アプリ本体
+COPY app /app/app
 
-# dataフォルダがないとエラーになるので作成
-RUN mkdir -p /app/data
+ENV PYTHONUNBUFFERED=1
 
-# ポート開放 (uvicornで指定したポート)
-EXPOSE 8080
-
-# 5. Botを起動（ファイル名はあなたのBotで合わせる）
-CMD ["python", "main.py"]
-# もし bot.py なら：
+# Koyeb では Procfile でもよいが、ここでは main.py を直接起動
+CMD ["python", "-m", "app.main"]
