@@ -2,27 +2,20 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# システム依存ライブラリ（Pillow などに必要なもの）
+# システム依存ライブラリ
 RUN apt-get update && apt-get install -y \
     build-essential \
     libjpeg-dev \
     zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# ルートの requirements をコピー
-COPY requirements.txt /app/requirements.txt
+# app/requirements.txt をコピー
+COPY app/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
 # アプリ本体
-COPY app //app/
-
-# dataフォルダがないとエラーになるので作成
-RUN mkdir -p /app/data
-
-# ポート開放 (uvicornで指定したポート)
-EXPOSE 8080
+COPY app /app/app
 
 ENV PYTHONUNBUFFERED=1
 
-# Koyeb では Procfile でもよいが、ここでは main.py を直接起動
-CMD ["python", "main.py"]
+CMD ["python", "-m", "app.main"]
