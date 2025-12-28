@@ -25,6 +25,8 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 GUILD_ID = os.getenv("GUILD_ID")
 
+guild = discord.Object(id=GUILD_ID)
+
 if not DISCORD_TOKEN:
     raise RuntimeError("環境変数 DISCORD_TOKEN が設定されていません")
 if not SUPABASE_URL or not SUPABASE_KEY:
@@ -400,9 +402,8 @@ def get_today_monitor_range(club: ClubConfig, tz: Optional[datetime.tzinfo] = No
 async def on_ready():
     print(f"Logged in as {bot.user} (ID: {bot.user.id})")
     # コマンド整理（必要なときだけ）
-    bot.tree.clear_commands(guild=None)
-    await bot.tree.sync()
-    print("Commands synced / cleared")
+    await bot.tree.sync(guild=guild)
+    print("Guild commands synced")
 
     # 全ギルドのクラブ設定をプリロード
     for guild in bot.guilds:
