@@ -151,26 +151,41 @@ async def add_club_to_db(
     required_minutes: int = 6,
     monitor_offset_minutes: int = 20,
 ) -> ClubConfig:
-    # 既存チェック
-    res = supabase.table("clubs").select("*").eq("name", name).eq("guild_id", guild_id).execute()
-    if res.data:
-        raise ValueError("同じ名前の部活がすでに登録されています")
+    # 1. 既存チェック
+    try:
+        res = supabase.table("clubs").select("*").eq("name", name).eq("guild_id", guild_id).execute()
+        if res.data:
+            raise ValueError("同じ名前の部活がすでに登録されています")
+    except Exception as e:
+        print(f"Check error: {e}")
 
-    start_t = datetime.strptime(start_time_str, "%H:%M").time()
+    # 2. 挿入用データの作成（必ずコロン ':' を使う）
+    insert_data = {
+        "name": name,
+        "guild_id": guild_id,
+        "voice_channel_id": voice_channel_id,
+        "start_time": f"{start_time_str}:00", # 秒を付与
+        "window_minutes": window_minutes,
+        "required_minutes": required_minutes,
+        "monitor_offset_minutes": monitor_offset_minutes,
+        "calendar_base_prefix": calendar_base_prefix,
+        "is_night": is_night,
+    }
+
+    # 3. DBへの挿入（リスト [ ] で囲んで渡す）
     try:
         insert_res = (
-           supabase.table("clubs")
-            .insert({ ... })
+            supabase.table("clubs")
+            .insert([insert_data])  # ここをリスト形式にする
             .execute()
         )
-        row = insert_res.data[0] # insert_res.error のチェックを消して直接 data にアクセス
+        row = insert_res.data[0]
     except Exception as e:
+        # ここで「Object of type set...」が出る場合は、insert_dataの中身に問題があります
         raise RuntimeError(f"Supabase insert error: {e}")
 
-    if insert_res.error:
-        raise RuntimeError(f"Supabase insert error: {insert_res.error}")
-
-    row = insert_res.data[0]
+    # 4. キャッシュ更新と返却
+    start_t = datetime.strptime(start_time_str, "%H:%M").time()
     cfg = ClubConfig(
         club_id=row["id"],
         name=row["name"],
@@ -188,7 +203,6 @@ async def add_club_to_db(
         club_cache[guild_id] = {}
     club_cache[guild_id][cfg.name] = cfg
     return cfg
-
 
 async def record_stamp_if_needed(
     club: ClubConfig,
