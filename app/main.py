@@ -112,11 +112,21 @@ async def load_clubs_for_guild(guild_id: int):
         return
 
     clubs_by_name: Dict[str, ClubConfig] = {}
-    for row in data: # 修正
+    for row in data:
+        # DBの文字列 "11:00:00" を Pythonの time オブジェクトに変換
+        start_t = datetime.strptime(row["start_time"], "%H:%M:%S").time()
+        
         club_cfg = ClubConfig(
             club_id=row["id"],
             name=row["name"],
-            # ... (中身はそのまま)
+            guild_id=row["guild_id"],
+            voice_channel_id=row["voice_channel_id"],
+            start_time=start_t,
+            window_minutes=row["window_minutes"],
+            required_minutes=row["required_minutes"],
+            monitor_offset_minutes=row["monitor_offset_minutes"],
+            calendar_base_prefix=row["calendar_base_prefix"],
+            is_night=row["is_night"],
         )
         clubs_by_name[club_cfg.name] = club_cfg
     club_cache[guild_id] = clubs_by_name
