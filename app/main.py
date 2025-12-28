@@ -397,7 +397,17 @@ def get_today_monitor_range(club: ClubConfig, tz: Optional[datetime.tzinfo] = No
     monitor_end = end_window
     return monitor_start, monitor_end
 
+class MyBot(commands.Bot):
+    def __init__(self):
+        super().__init__(command_prefix="!", intents=intents)
 
+    async def setup_hook(self):
+        # 指定したギルドに対してグローバルコマンドをコピー
+        self.tree.copy_global_to(guild=guild)
+        await self.tree.sync(guild=guild)
+        print(f"Synced slash commands to {GUILD_ID}")
+
+bot = MyBot()
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user} (ID: {bot.user.id})")
@@ -406,12 +416,6 @@ async def on_ready():
     for g in bot.guilds:
         await load_clubs_for_guild(g.id)
     print("Club configs loaded.")
-
-    # 🔑 ここが超重要
-    bot.tree.copy_global_to(guild=guild)
-    await bot.tree.sync(guild=guild)
-
-    print("Guild commands synced")
     presence_checker.start()
 
 
@@ -599,5 +603,6 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
 
