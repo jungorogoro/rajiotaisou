@@ -105,9 +105,14 @@ presence_accumulator: Dict[Tuple[int, str, int, date], int] = {}
 
 async def load_clubs_for_guild(guild_id: int):
     """Supabase から指定ギルドのクラブ設定を読み込んでキャッシュする"""
-    res = supabase.table("clubs").select("*").eq("guild_id", guild_id).execute()
-    if res.error:
-        print("Error loading clubs:", res.error)
+    from postgrest.exceptions import APIError # エラー詳細を捕まえたい場合
+
+    try:
+        res = supabase.table("clubs").select("*").eq("guild_id", guild_id).execute()
+        # 成功した場合はそのまま res.data が使える
+        data = res.data 
+    except Exception as e:
+        print(f"Error loading clubs: {e}")
         return
 
     clubs_by_name: Dict[str, ClubConfig] = {}
@@ -152,24 +157,16 @@ async def add_club_to_db(
         raise ValueError("同じ名前の部活がすでに登録されています")
 
     start_t = datetime.strptime(start_time_str, "%H:%M").time()
-
-    insert_res = (
-        supabase.table("clubs")
-        .insert(
-            {
-                "name": name,
-                "guild_id": guild_id,
-                "voice_channel_id": voice_channel_id,
-                "start_time": start_time_str + ":00",
-                "window_minutes": window_minutes,
-                "required_minutes": required_minutes,
-                "monitor_offset_minutes": monitor_offset_minutes,
-                "calendar_base_prefix": calendar_base_prefix,
-                "is_night": is_night,
-            }
+    try:
+        insert_res = (
+           supabase.table("clubs")
+            .insert({ ... })
+            .execute()
         )
-        .execute()
-    )
+        row = insert_res.data[0] # insert_res.error のチェックを消して直接 data にアクセス
+    except Exception as e:
+        raise RuntimeError(f"Supabase insert error: {e}")
+
     if insert_res.error:
         raise RuntimeError(f"Supabase insert error: {insert_res.error}")
 
@@ -248,9 +245,6 @@ async def get_stats_for_user(club: ClubConfig, user_id: int) -> Tuple[int, int, 
         .order("date", desc=False)
         .execute()
     )
-    if res.error:
-        print("Error fetching stamps:", res.error)
-        return 0, 0, 0
 
     dates = [datetime.strptime(r["date"], "%Y-%m-%d").date() for r in res.data]
     if not dates:
@@ -366,9 +360,6 @@ async def get_stamp_dates_for_month(club: ClubConfig, user_id: int, month_date: 
         .order("date", desc=False)
         .execute()
     )
-    if res.error:
-        print("Error fetching stamp dates:", res.error)
-        return []
 
     return [datetime.strptime(r["date"], "%Y-%m-%d").date() for r in res.data]
 
@@ -603,6 +594,7 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
 
 
