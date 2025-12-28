@@ -402,16 +402,16 @@ def get_today_monitor_range(club: ClubConfig, tz: Optional[datetime.tzinfo] = No
 async def on_ready():
     print(f"Logged in as {bot.user} (ID: {bot.user.id})")
 
-    # 全ギルドのクラブ設定をプリロード
+    # クラブ設定ロード
     for g in bot.guilds:
         await load_clubs_for_guild(g.id)
-
     print("Club configs loaded.")
 
-    # 🔑 ギルド限定で即時同期
+    # 🔑 ここが超重要
+    bot.tree.copy_global_to(guild=guild)
     await bot.tree.sync(guild=guild)
-    print("Guild commands synced")
 
+    print("Guild commands synced")
     presence_checker.start()
 
 
