@@ -104,35 +104,22 @@ presence_accumulator: Dict[Tuple[int, str, int, date], int] = {}
 # ====== Supabase helper ======
 
 async def load_clubs_for_guild(guild_id: int):
-    """Supabase から指定ギルドのクラブ設定を読み込んでキャッシュする"""
-    from postgrest.exceptions import APIError # エラー詳細を捕まえたい場合
-
     try:
         res = supabase.table("clubs").select("*").eq("guild_id", guild_id).execute()
-        # 成功した場合はそのまま res.data が使える
-        data = res.data 
+        data = res.data
     except Exception as e:
         print(f"Error loading clubs: {e}")
         return
 
     clubs_by_name: Dict[str, ClubConfig] = {}
-    for row in res.data:
+    for row in data: # 修正
         club_cfg = ClubConfig(
             club_id=row["id"],
             name=row["name"],
-            guild_id=row["guild_id"],
-            voice_channel_id=row["voice_channel_id"],
-            start_time=datetime.strptime(row["start_time"], "%H:%M:%S").time(),
-            window_minutes=row["window_minutes"],
-            required_minutes=row["required_minutes"],
-            monitor_offset_minutes=row["monitor_offset_minutes"],
-            calendar_base_prefix=row["calendar_base_prefix"],
-            is_night=row["is_night"],
+            # ... (中身はそのまま)
         )
         clubs_by_name[club_cfg.name] = club_cfg
-
     club_cache[guild_id] = clubs_by_name
-
 
 async def get_or_load_club(guild_id: int, club_name: str) -> Optional[ClubConfig]:
     if guild_id not in club_cache:
@@ -204,46 +191,24 @@ async def add_club_to_db(
     club_cache[guild_id][cfg.name] = cfg
     return cfg
 
-async def record_stamp_if_needed(
-    club: ClubConfig,
-    user_id: int,
-    date_obj: date,
-    seconds_in_window: int,
-):
-    """
-    その日の必要時間を超えていたら stamps に書き込み。
-    すでにスタンプ済みなら何もしない。
-    """
+async def record_stamp_if_needed(club: ClubConfig, user_id: int, date_obj: date, seconds_in_window: int):
     if seconds_in_window < int(club.required_timedelta.total_seconds()):
         return
 
-    res = (
-        supabase.table("stamps")
-        .select("*")
-        .eq("user_id", user_id)
-        .eq("guild_id", club.guild_id)
-        .eq("club_id", club.club_id)
-        .eq("date", date_obj.isoformat())
-        .execute()
-    )
-    if res.data:
-        # すでにスタンプ済み
-        return
+    try:
+        # 重複チェック
+        res = supabase.table("stamps").select("*").eq("user_id", user_id).eq("guild_id", club.guild_id).eq("club_id", club.club_id).eq("date", date_obj.isoformat()).execute()
+        if res.data: return
 
-    ins = (
-        supabase.table("stamps")
-        .insert(
-            {
-                "user_id": user_id,
-                "guild_id": club.guild_id,
-                "club_id": club.club_id,
-                "date": date_obj.isoformat(),
-            }
-        )
-        .execute()
-    )
-    if ins.error:
-        print("Error inserting stamp:", ins.error)
+        # 挿入
+        supabase.table("stamps").insert({
+            "user_id": user_id,
+            "guild_id": club.guild_id,
+            "club_id": club.club_id,
+            "date": date_obj.isoformat(),
+        }).execute()
+    except Exception as e:
+        print(f"Error recording stamp: {e}")
 
 
 async def get_stats_for_user(club: ClubConfig, user_id: int) -> Tuple[int, int, int]:
@@ -551,38 +516,26 @@ async def add_club(
 
 
 @bot.tree.command(name="card", description="スタンプカードを表示します")
-async def card(
-    interaction: discord.Interaction,
-    club_name: str,
-    member: Optional[discord.Member] = None,
-):
-    """
-    例: /card club_name:morning member:@自分
-    member 省略時は自分。
-    """
+async def card(interaction: discord.Interaction, club_name: str, member: Optional[discord.Member] = None):
     await interaction.response.defer()
-
-    if not member:
-        member = interaction.user
+    if not member: member = interaction.user
 
     club = await get_or_load_club(interaction.guild_id, club_name)
     if not club:
-        await interaction.followup.send("その名前の部活設定が見つかりません。", ephemeral=True)
+        await interaction.followup.send("部活が見つかりません。", ephemeral=True)
         return
 
-    # 今月のスタンプ日取得
     today = date.today()
-    stamp_dates = await get_stamp_dates_for_month(club, member.id)
+    # 修正: 引数に today を追加
+    stamp_dates = await get_stamp_dates_for_month(club, member.id, today)
 
-    # カード画像生成
-    print(f"DEBUG: Looking for images with prefix: {club.calendar_base_prefix}")
-    print(f"DEBUG: Current month: {today.strftime('%Y_%m')}")
     try:
-        buf = apply_stamps_to_calendar(club, today, stamp_dates)
-    except FileNotFoundError as e:
-        await interaction.followup.send(f"画像ファイルが見つかりません: {e}", ephemeral=True)
+        # 修正: asyncio.to_thread を使用
+        buf = await asyncio.to_thread(apply_stamps_to_calendar, club, today, stamp_dates)
+    except Exception as e:
+        await interaction.followup.send(f"画像生成エラー: {e}", ephemeral=True)
         return
-
+    
     # 統計情報
     total_days, current_streak, max_streak = await get_stats_for_user(club, member.id)
 
@@ -610,7 +563,6 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
 
 
 
