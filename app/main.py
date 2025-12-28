@@ -493,6 +493,11 @@ async def presence_checker():
 
 # ====== スラッシュコマンド ======
 
+@bot.tree.command(name="ping", description="動作確認")
+async def ping(interaction: discord.Interaction):
+    await interaction.response.send_message("pong")
+
+
 @bot.tree.command(name="add_club", description="新しい部活(VC監視)設定を追加します")
 async def add_club(
     interaction: discord.Interaction,
