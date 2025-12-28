@@ -42,15 +42,6 @@ intents.voice_states = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-@bot.event
-async def on_ready():
-    print("Bot ready")
-
-    # すべてのコマンドを削除
-    bot.tree.clear_commands(guild=None)
-    await bot.tree.sync()
-
-    print("Commands cleared")
 
 # ====== サーバー 起動 ======
 threading.Thread(
@@ -408,6 +399,11 @@ def get_today_monitor_range(club: ClubConfig, tz: Optional[datetime.tzinfo] = No
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user} (ID: {bot.user.id})")
+    # コマンド整理（必要なときだけ）
+    bot.tree.clear_commands(guild=None)
+    await bot.tree.sync()
+    print("Commands synced / cleared")
+
     # 全ギルドのクラブ設定をプリロード
     for guild in bot.guilds:
         await load_clubs_for_guild(guild.id)
@@ -594,10 +590,5 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
-
-
-
-
 
 
