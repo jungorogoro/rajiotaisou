@@ -575,6 +575,8 @@ async def card(
     stamp_dates = await get_stamp_dates_for_month(club, member.id)
 
     # カード画像生成
+    print(f"DEBUG: Looking for images with prefix: {club.calendar_base_prefix}")
+    print(f"DEBUG: Current month: {today.strftime('%Y_%m')}")
     try:
         buf = apply_stamps_to_calendar(club, today, stamp_dates)
     except FileNotFoundError as e:
