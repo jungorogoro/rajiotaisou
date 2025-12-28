@@ -23,9 +23,9 @@ load_dotenv()
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-GUILD_ID = os.getenv("GUILD_ID")
-
+GUILD_ID = int(os.getenv("GUILD_ID"))
 guild = discord.Object(id=GUILD_ID)
+
 
 if not DISCORD_TOKEN:
     raise RuntimeError("環境変数 DISCORD_TOKEN が設定されていません")
@@ -403,12 +403,15 @@ async def on_ready():
     print(f"Logged in as {bot.user} (ID: {bot.user.id})")
 
     # 全ギルドのクラブ設定をプリロード
-    for guild in bot.guilds:
-        await load_clubs_for_guild(guild.id)
+    for g in bot.guilds:
+        await load_clubs_for_guild(g.id)
+
     print("Club configs loaded.")
-        # コマンド整理（必要なときだけ）
+
+    # 🔑 ギルド限定で即時同期
     await bot.tree.sync(guild=guild)
     print("Guild commands synced")
+
     presence_checker.start()
 
 
