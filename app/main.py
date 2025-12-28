@@ -113,8 +113,11 @@ async def load_clubs_for_guild(guild_id: int):
 
     clubs_by_name: Dict[str, ClubConfig] = {}
     for row in data:
-        # DBの文字列 "11:00:00" を Pythonの time オブジェクトに変換
-        start_t = datetime.strptime(row["start_time"], "%H:%M:%S").time()
+        # DBの時刻文字列をPythonのtimeオブジェクトに変換
+        try:
+            start_t = datetime.strptime(row["start_time"], "%H:%M:%S").time()
+        except ValueError:
+            start_t = datetime.strptime(row["start_time"], "%H:%M").time()
         
         club_cfg = ClubConfig(
             club_id=row["id"],
