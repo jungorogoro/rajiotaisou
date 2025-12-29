@@ -337,7 +337,7 @@ def apply_stamps_to_calendar(
 # --- ここでサイズを調整 ---
     # マス目のサイズ (150, 100) より少し小さくすると綺麗に収まります
     # 例: 幅 120px にリサイズ（アスペクト比を維持する場合）
-    target_width = 260 
+    target_width = 250 
     ratio = target_width / stamp_img.width
     target_height = int(stamp_img.height * ratio)
     stamp_img = stamp_img.resize((target_width, target_height), Image.LANCZOS)
