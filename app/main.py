@@ -468,6 +468,8 @@ async def presence_checker():
                 # 判定窓内にいるときだけ滞在時間をカウント（「11時以前からいた」人も、
                 # 実際の必要時間カウントは 11:00〜11:15 の間とする）
                 if window_start <= now <= window_end:
+                    print(f"DEBUG: {member.display_name} is in window! Current seconds: {presence_accumulator.get(key, 0)}")
+        # ... 以降の処理
                     key_date = window_start.date()
                     key = (guild.id, club.club_id, member.id, key_date)
                     # 30秒ぶん加算
