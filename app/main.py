@@ -1,13 +1,7 @@
 import os
-# 3行目付近
-from datetime import datetime, timedelta, date, time, timezone  # timezone を追加 # 追加
-
-# タイムゾーンを日本設定にする
-os.environ['TZ'] = 'Asia/Tokyo'
-if hasattr(time, 'tzset'):
-    time.tzset()
 import asyncio
-from datetime import datetime, timedelta, date, time
+import time  # OSのtimeモジュール (タイムゾーン用)
+from datetime import datetime, timedelta, date, time as pytime, timezone # datetimeのtimeをpytimeとして扱う
 from io import BytesIO
 from typing import Dict, Optional, List, Tuple
 
@@ -17,22 +11,24 @@ from dotenv import load_dotenv
 from supabase import create_client, Client
 from PIL import Image
 
-from app.date.calendar_utils import get_day_position
+# タイムゾーンの設定はインポート直後に行うのが安全
+os.environ['TZ'] = 'Asia/Tokyo'
+if hasattr(time, 'tzset'):
+    time.tzset()
+
+# 以降の from datetime import ... はすべて削除してください
+
+from app.date.calendar_utils import get_day_position # パスが正しいか確認してください
 
 import threading
 from app.server import run as run_server
 
-
-
-# .env 読み込み
-load_dotenv()
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 GUILD_ID = int(os.getenv("GUILD_ID"))
 guild = discord.Object(id=GUILD_ID)
-
 
 if not DISCORD_TOKEN:
     raise RuntimeError("環境変数 DISCORD_TOKEN が設定されていません")
@@ -67,7 +63,7 @@ class ClubConfig:
         name: str,
         guild_id: int,
         voice_channel_id: int,
-        start_time: time,
+        start_time: pytime,
         window_minutes: int,
         required_minutes: int,
         monitor_offset_minutes: int,
@@ -122,6 +118,7 @@ async def load_clubs_for_guild(guild_id: int):
     for row in data:
         # DBの時刻文字列をPythonのtimeオブジェクトに変換
         try:
+           # 文字列から時刻を取り出し、pytime型として明示的に扱う（またはそのまま .time() メソッドを使う）
             start_t = datetime.strptime(row["start_time"], "%H:%M:%S").time()
         except ValueError:
             start_t = datetime.strptime(row["start_time"], "%H:%M").time()
@@ -191,7 +188,7 @@ async def add_club_to_db(
         # ここで「Object of type set...」が出る場合は、insert_dataの中身に問題があります
         raise RuntimeError(f"Supabase insert error: {e}")
 
-    # 4. キャッシュ更新と返却
+# 4. キャッシュ更新と返却
     start_t = datetime.strptime(start_time_str, "%H:%M").time()
     cfg = ClubConfig(
         club_id=row["id"],
@@ -201,11 +198,10 @@ async def add_club_to_db(
         start_time=start_t,
         window_minutes=row["window_minutes"],
         required_minutes=row["required_minutes"],
-        monitor_offset_minutes=row["monitor_offset_minutes"],
+        monitor_offset_minutes=row["monitor_offset_minutes"], # ★ここを追加
         calendar_base_prefix=row["calendar_base_prefix"],
         is_night=row["is_night"],
     )
-
     if guild_id not in club_cache:
         club_cache[guild_id] = {}
     club_cache[guild_id][cfg.name] = cfg
