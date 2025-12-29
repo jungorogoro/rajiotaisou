@@ -152,8 +152,8 @@ async def add_club_to_db(
     start_time_str: str,
     calendar_base_prefix: str,
     is_night: bool = False,
-    window_minutes: int = 60,
-    required_minutes: int = 1,
+    window_minutes: int = 15,
+    required_minutes: int = 6,
     monitor_offset_minutes: int = 20,
 ) -> ClubConfig:
     # 1. 既存チェック
@@ -589,22 +589,46 @@ async def card(
         await interaction.followup.send(f"画像生成エラー: {e}", ephemeral=True)
         return
     
-    # 統計情報
+# 統計情報の取得
     total_days, current_streak, max_streak = await get_stats_for_user(club, member.id)
 
     file = discord.File(buf, filename="stamp_card.png")
+    
+    # --- 装飾版 Embed ---
     embed = discord.Embed(
-        title=f"{club.name} スタンプカード - {member.display_name}",
-        description=(
-            f"総参加日数: **{total_days}日**\n"
-            f"現在の連続参加日数: **{current_streak}日**\n"
-            f"最高連続参加日数: **{max_streak}日**"
-        ),
-        color=discord.Color.green(),
+        title=f"✨ {club.name} STAMP CARD ✨",
+        description=f"{member.mention} さんの活動記録です。毎日コツコツ頑張りましょう！",
+        color=0xffd700, # 豪華なゴールドカラー
     )
-    embed.set_image(url="attachment://stamp_card.png")
-    await interaction.followup.send(file=file, embed=embed)
 
+    # ユーザー情報を左側に、アイコンを右上に配置
+    embed.set_author(name=member.display_name, icon_url=member.display_avatar.url)
+    embed.set_thumbnail(url="https://emojicdn.elk.sh/🏆") # 達成感を出すトロフィーアイコン
+
+    # 統計情報をフィールドに分けて表示（インラインで横並び）
+    embed.add_field(
+        name="📊 累計スタンプ", 
+        value=f"```fix\n{total_days} 日分\n```", 
+        inline=True
+    )
+    embed.add_field(
+        name="🔥 現在の継続", 
+        value=f"```yaml\n{current_streak} 日連続\n```", 
+        inline=True
+    )
+    embed.add_field(
+        name="👑 自己ベスト", 
+        value=f"```arm\n{max_streak} 日連続\n```", 
+        inline=True
+    )
+
+    # 下部にメッセージを追加
+    status_msg = "その調子です！🚀" if current_streak > 0 else "明日からまた始めましょう！🌱"
+    embed.set_footer(text=f"判定時刻: {club.start_time.strftime('%H:%M')}〜 | {status_msg}")
+    
+    embed.set_image(url="attachment://stamp_card.png")
+    
+    await interaction.followup.send(file=file, embed=embed)
 
 # ====== Bot 起動 ======
 
