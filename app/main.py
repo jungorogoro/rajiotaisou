@@ -70,6 +70,7 @@ class ClubConfig:
         monitor_offset_minutes: int,
         calendar_base_prefix: str,
         is_night: bool,
+        mention_role_id: Optional[int] = None, # 1. 引数に追加
     ):
         self.club_id = club_id
         self.name = name
@@ -81,6 +82,7 @@ class ClubConfig:
         self.monitor_offset_minutes = monitor_offset_minutes
         self.calendar_base_prefix = calendar_base_prefix
         self.is_night = is_night
+        self.mention_role_id = mention_role_id # 2. selfに代入して保持
 
     @property
     def window_timedelta(self) -> timedelta:
@@ -135,6 +137,7 @@ async def load_clubs_for_guild(guild_id: int):
             monitor_offset_minutes=row["monitor_offset_minutes"],
             calendar_base_prefix=row["calendar_base_prefix"],
             is_night=row["is_night"],
+            mention_role_id=row.get("mention_role_id"), # ★ これを追加
         )
         clubs_by_name[club_cfg.name] = club_cfg
     club_cache[guild_id] = clubs_by_name
@@ -151,6 +154,7 @@ async def add_club_to_db(
     voice_channel_id: int,
     start_time_str: str,
     calendar_base_prefix: str,
+    mention_role_id: int, # ★ 引数に追加
     is_night: bool = False,
     window_minutes: int = 15,
     required_minutes: int = 6,
@@ -175,6 +179,7 @@ async def add_club_to_db(
         "monitor_offset_minutes": monitor_offset_minutes,
         "calendar_base_prefix": calendar_base_prefix,
         "is_night": is_night,
+        "mention_role_id": mention_role_id, # ★ 追加
     }
 
     # 3. DBへの挿入（リスト [ ] で囲んで渡す）
@@ -202,6 +207,7 @@ async def add_club_to_db(
         monitor_offset_minutes=row["monitor_offset_minutes"], # ★ここを追加
         calendar_base_prefix=row["calendar_base_prefix"],
         is_night=row["is_night"],
+        mention_role_id=row["mention_role_id"], # ★ ここにも追加
     )
     if guild_id not in club_cache:
         club_cache[guild_id] = {}
@@ -517,6 +523,7 @@ async def add_club(
     voice_channel: discord.VoiceChannel,
     start_time_str: str,
     calendar_base_prefix: str,
+    mention_role: discord.Role, # ★ ここに受け取り用の引数を追加
     is_night: bool = False,
 ):
     """
@@ -534,6 +541,7 @@ async def add_club(
             voice_channel_id=voice_channel.id,
             start_time_str=start_time_str,
             calendar_base_prefix=calendar_base_prefix,
+            mention_role_id=mention_role.id, # ★ ここでIDを渡す
             is_night=is_night,
         )
     except ValueError as e:
@@ -545,12 +553,14 @@ async def add_club(
 
     await interaction.response.send_message(
         f"部活 `{cfg.name}` を登録しました。\n"
+        f"通知ロール: {mention_role.mention}\n" # ★ 確認メッセージにロールを表示
         f"開始時刻: {cfg.start_time.strftime('%H:%M')}\n"
         f"VC: {voice_channel.mention}\n"
         f"監視開始: 開始 {cfg.monitor_offset_minutes} 分前から\n"
         f"判定窓: {cfg.window_minutes} 分 / 必要滞在: {cfg.required_minutes} 分\n"
         f"カレンダーベース: {cfg.calendar_base_prefix} (night={cfg.is_night})"
     )
+ 
 
 # 候補を出すための関数
 async def club_autocomplete(
@@ -563,6 +573,35 @@ async def club_autocomplete(
         app_commands.Choice(name=name, value=name)
         for name in clubs.keys() if current.lower() in name.lower()
     ][:25] # 最大25件まで表示可能
+
+# --- 部活削除コマンド ---
+@bot.tree.command(name="remove_club", description="登録済みの部活設定を削除します")
+@app_commands.default_permissions(administrator=True) # 管理者のみ
+@app_commands.autocomplete(club_name=club_autocomplete) # 名前を選択式に
+async def remove_club(interaction: discord.Interaction, club_name: str):
+    await interaction.response.defer(ephemeral=True) # 処理に時間がかかる場合に備えて
+
+    # キャッシュまたはDBから対象を取得
+    club = await get_or_load_club(interaction.guild_id, club_name)
+    if not club:
+        await interaction.followup.send(f"部活 `{club_name}` は見つかりませんでした。", ephemeral=True)
+        return
+
+    try:
+        # 1. Supabaseから削除
+        supabase.table("clubs").delete().eq("id", club.club_id).execute()
+
+        # 2. キャッシュからも削除
+        if interaction.guild_id in club_cache:
+            if club_name in club_cache[interaction.guild_id]:
+                del club_cache[interaction.guild_id][club_name]
+
+        await interaction.followup.send(f"部活 `{club_name}` の設定を完全に削除しました。", ephemeral=True)
+
+    except Exception as e:
+        await interaction.followup.send(f"削除中にエラーが発生しました: {e}", ephemeral=True)
+
+
 
 @bot.tree.command(name="card", description="スタンプカードを表示します")
 @app_commands.autocomplete(club_name=club_autocomplete) # ここで候補関数を紐付け
