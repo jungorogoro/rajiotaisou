@@ -8,10 +8,10 @@ from typing import Tuple
 CALENDAR_CONFIG = {
     "base_width": 1200,   # calendar_base_yyyy_mm.png の幅
     "base_height": 900,   # 高さ
-    "offset_x": 80,       # 最初の列のXオフセット
-    "offset_y": 200,      # 最初の行のYオフセット
-    "cell_width": 150,    # 1日分の幅
-    "cell_height": 100,   # 1日分の高さ
+    "offset_x": 155,       # 最初の列のXオフセット
+    "offset_y": 395,      # 最初の行のYオフセット
+    "cell_width": 320,    # 1日分の幅
+    "cell_height": 265,   # 1日分の高さ
 }
 
 
