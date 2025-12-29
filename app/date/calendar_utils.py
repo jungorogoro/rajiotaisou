@@ -9,9 +9,9 @@ CALENDAR_CONFIG = {
     "base_width": 1200,   # calendar_base_yyyy_mm.png の幅
     "base_height": 900,   # 高さ
     "offset_x": 155,       # 最初の列のXオフセット
-    "offset_y": 395,      # 最初の行のYオフセット
-    "cell_width": 335,    # 1日分の幅
-    "cell_height": 285,   # 1日分の高さ
+    "offset_y": 380,      # 最初の行のYオフセット
+    "cell_width": 300,    # 1日分の幅
+    "cell_height": 275,   # 1日分の高さ
 }
 
 
