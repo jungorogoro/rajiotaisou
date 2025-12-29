@@ -137,7 +137,7 @@ async def load_clubs_for_guild(guild_id: int):
             monitor_offset_minutes=row["monitor_offset_minutes"],
             calendar_base_prefix=row["calendar_base_prefix"],
             is_night=row["is_night"],
-            mention_role_id=row.get("mention_role_id"), # ★ これを追加
+            mention_role_id=row.get("mention_role_id"), # ★ DBから取得
         )
         clubs_by_name[club_cfg.name] = club_cfg
     club_cache[guild_id] = clubs_by_name
@@ -462,6 +462,7 @@ async def on_voice_state_update(member, before, after):
     """
     return  # ここでは特に何もしない。すべて presence_checker に任せる。
 
+notified_keys = set()
 
 @tasks.loop(seconds=30)
 async def presence_checker():
@@ -469,12 +470,32 @@ async def presence_checker():
     jst = timezone(timedelta(hours=9))
     now = datetime.now(jst)
 
+    five_min_later_str = (now + timedelta(minutes=5)).strftime("%H:%M")
+    today_str = now.strftime("%Y-%m-%d")
+
     for guild in bot.guilds:
         guild_clubs = club_cache.get(guild.id, {})
         if not guild_clubs:
             continue
 
         for club in guild_clubs.values():
+            # --- 追加: 5分前通知ロジック ---
+            club_time_str = club.start_time.strftime("%H:%M")
+            notify_key = f"notif_{club.club_id}_{today_str}"
+
+            if five_min_later_str == club_time_str and notify_key not in notified_keys:
+                target_channel = discord.utils.get(guild.text_channels, name="スタンプ帳確認")
+                if target_channel and club.mention_role_id:
+                    try:
+                        await target_channel.send(
+                            f"🔔 <@&{club.mention_role_id}> **{club.name}** の開始5分前です！\n"
+                            f"VC: <#{club.voice_channel_id}> に集まりましょう！"
+                        )
+                        notified_keys.add(notify_key)
+                    except Exception as e:
+                        print(f"Error sending notification: {e}")
+            # ----------------------------
+            
             monitor_start, monitor_end = get_today_monitor_range(club, tz=now.tzinfo)
             window_start, window_end = get_today_window_range(club, tz=now.tzinfo)
 
