@@ -394,7 +394,7 @@ bot = MyBot()
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user} (ID: {bot.user.id})")
-
+    print(f"現在時刻: {datetime.now()}")
     # クラブ設定ロード
     for g in bot.guilds:
         await load_clubs_for_guild(g.id)
