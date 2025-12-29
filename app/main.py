@@ -7,6 +7,7 @@ from typing import Dict, Optional, List, Tuple
 
 import discord
 from discord.ext import commands, tasks
+from discord import app_commands
 from dotenv import load_dotenv
 from supabase import create_client, Client
 from PIL import Image
@@ -151,8 +152,8 @@ async def add_club_to_db(
     start_time_str: str,
     calendar_base_prefix: str,
     is_night: bool = False,
-    window_minutes: int = 15,
-    required_minutes: int = 6,
+    window_minutes: int = 60,
+    required_minutes: int = 1,
     monitor_offset_minutes: int = 20,
 ) -> ClubConfig:
     # 1. 既存チェック
@@ -223,6 +224,17 @@ async def record_stamp_if_needed(club: ClubConfig, user_id: int, date_obj: date,
             "club_id": club.club_id,
             "date": date_obj.isoformat(),
         }).execute()
+
+# --- ここから通知処理を追加 ---
+        # 通知を送りたいチャンネルIDを事前に取得するか、特定の名前のチャンネルを探します
+        # 例: 「スタンプ通知」という名前のチャンネルに送る場合
+        guild = bot.get_guild(club.guild_id)
+        if guild:
+            # チャンネル名で探す例（特定のIDにする場合は guild.get_channel(ID)）
+            target_channel = discord.utils.get(guild.text_channels, name="スタンプ帳確認")
+            if target_channel:
+                await target_channel.send(f"🎉 <@{user_id}> さん、今日の **{club.name}** スタンプを獲得しました！")
+        # ----------------------------
     except Exception as e:
         print(f"Error recording stamp: {e}")
 
@@ -530,9 +542,25 @@ async def add_club(
         f"カレンダーベース: {cfg.calendar_base_prefix} (night={cfg.is_night})"
     )
 
+# 候補を出すための関数
+async def club_autocomplete(
+    interaction: discord.Interaction,
+    current: str,
+) -> List[app_commands.Choice[str]]:
+    guild_id = interaction.guild_id
+    clubs = club_cache.get(guild_id, {})
+    return [
+        app_commands.Choice(name=name, value=name)
+        for name in clubs.keys() if current.lower() in name.lower()
+    ][:25] # 最大25件まで表示可能
 
 @bot.tree.command(name="card", description="スタンプカードを表示します")
-async def card(interaction: discord.Interaction, club_name: str, member: Optional[discord.Member] = None):
+@app_commands.autocomplete(club_name=club_autocomplete) # ここで候補関数を紐付け
+async def card(
+    interaction: discord.Interaction, 
+    club_name: str, 
+    member: Optional[discord.Member] = None
+):
     await interaction.response.defer()
     if not member: member = interaction.user
 
