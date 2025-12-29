@@ -10,7 +10,7 @@ CALENDAR_CONFIG = {
     "base_height": 900,   # 高さ
     "offset_x": 155,       # 最初の列のXオフセット
     "offset_y": 380,      # 最初の行のYオフセット
-    "cell_width": 320,    # 1日分の幅
+    "cell_width": 330,    # 1日分の幅
     "cell_height": 270,   # 1日分の高さ
 }
 
