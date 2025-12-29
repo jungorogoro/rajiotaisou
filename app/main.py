@@ -510,6 +510,7 @@ async def ping(interaction: discord.Interaction):
 
 
 @bot.tree.command(name="add_club", description="新しい部活(VC監視)設定を追加します")
+@app_commands.default_permissions(administrator=True) # ★これを追加
 async def add_club(
     interaction: discord.Interaction,
     name: str,
@@ -607,12 +608,12 @@ async def card(
 
     # 統計情報をフィールドに分けて表示（インラインで横並び）
     embed.add_field(
-        name="📊 累計スタンプ", 
+        name="📊 累計", 
         value=f"```fix\n{total_days} 日分\n```", 
         inline=True
     )
     embed.add_field(
-        name="🔥 現在の継続", 
+        name="🔥 現在継続", 
         value=f"```yaml\n{current_streak} 日連続\n```", 
         inline=True
     )
@@ -629,6 +630,92 @@ async def card(
     embed.set_image(url="attachment://stamp_card.png")
     
     await interaction.followup.send(file=file, embed=embed)
+
+
+# ====== ランキング表示 ======
+async def get_ranking(club: ClubConfig, period: str) -> List[Tuple[int, int]]:
+    """
+    period: 'week', 'month', 'year'
+    戻り値: [(user_id, count), ...] のリスト
+    """
+    now = datetime.now(timezone(timedelta(hours=9)))
+    today = now.date()
+
+    if period == 'week':
+        # 月曜日を開始日とする
+        start_date = today - timedelta(days=today.weekday())
+    elif period == 'month':
+        start_date = today.replace(day=1)
+    elif period == 'year':
+        start_date = today.replace(month=1, day=1)
+    else:
+        return []
+
+    res = (
+        supabase.table("stamps")
+        .select("user_id")
+        .eq("guild_id", club.guild_id)
+        .eq("club_id", club.club_id)
+        .gte("date", start_date.isoformat())
+        .execute()
+    )
+
+    # ユーザーごとにカウント
+    counts = {}
+    for r in res.data:
+        uid = r["user_id"]
+        counts[uid] = counts.get(uid, 0) + 1
+
+    # カウント順にソートして上位10名を取得
+    sorted_ranking = sorted(counts.items(), key=lambda x: x[1], reverse=True)
+    return sorted_ranking[:10]
+
+
+# ====== ランキングコマンド ======
+@bot.tree.command(name="ranking", description="部活のスタンプランキングを表示します")
+@app_commands.describe(period="集計期間を選択してください")
+@app_commands.choices(period=[
+    app_commands.Choice(name="週間 (今週)", value="week"),
+    app_commands.Choice(name="月間 (今月)", value="month"),
+    app_commands.Choice(name="年間 (今年)", value="year"),
+])
+@app_commands.autocomplete(club_name=club_autocomplete)
+async def ranking(interaction: discord.Interaction, club_name: str, period: str):
+    await interaction.response.defer()
+
+    club = await get_or_load_club(interaction.guild_id, club_name)
+    if not club:
+        await interaction.followup.send("部活が見つかりません。", ephemeral=True)
+        return
+
+    ranking_data = await get_ranking(club, period)
+    
+    period_label = {"week": "週間", "month": "月間", "year": "年間"}[period]
+    
+    embed = discord.Embed(
+        title=f"🏆 {club.name} {period_label}ランキング",
+        color=0xffd700 if period == "year" else 0x5865f2,
+        description=f"現在のトップ10を表示します（{date.today().isoformat()} 時点）"
+    )
+
+    if not ranking_data:
+        embed.description = "まだこの期間のスタンプ記録がありません。🌱"
+    else:
+        ranking_list = []
+        for i, (user_id, count) in enumerate(ranking_data, 1):
+            # メンバー名を取得（キャッシュになければID表示）
+            member = interaction.guild.get_member(user_id)
+            name = member.display_name if member else f"User({user_id})"
+            
+            # メダル絵文字の装飾
+            medal = {1: "🥇", 2: "🥈", 3: "🥉"}.get(i, f"**{i}位**")
+            ranking_list.append(f"{medal} {name} ― `{count}個`")
+        
+        embed.add_field(name="順位 ― 獲得数", value="\n".join(ranking_list), inline=False)
+
+    embed.set_footer(text=f"Requested by {interaction.user.display_name}")
+    await interaction.followup.send(embed=embed)
+
 
 # ====== Bot 起動 ======
 
