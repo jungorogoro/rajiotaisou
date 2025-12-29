@@ -334,13 +334,22 @@ def apply_stamps_to_calendar(
     
     stamp_img = Image.open(stamp_path).convert("RGBA")
     
+# --- ここでサイズを調整 ---
+    # マス目のサイズ (150, 100) より少し小さくすると綺麗に収まります
+    # 例: 幅 120px にリサイズ（アスペクト比を維持する場合）
+    target_width = 120 
+    ratio = target_width / stamp_img.width
+    target_height = int(stamp_img.height * ratio)
+    stamp_img = stamp_img.resize((target_width, target_height), Image.LANCZOS)
+    # --------------------------
+
     # スタンプを合成
     for d in stamp_dates:
         try:
             x, y = get_day_position(d)
-            # スタンプのサイズを調整したい場合はここでリサイズ
-            # stamp_img = stamp_img.resize((100, 100)) 
-            img.alpha_composite(stamp_img, dest=(int(x), int(y)))
+            # 中央寄せにしたい場合は、座標にオフセットを加える
+            # 例: (x + 15, y + 10) など
+            img.alpha_composite(stamp_img, dest=(int(x + 15), int(y + 5)))
         except Exception as e:
             print(f"Stamp position error for {d}: {e}")
             continue
