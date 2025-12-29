@@ -1,4 +1,11 @@
 import os
+# 3行目付近
+from datetime import datetime, timedelta, date, time, timezone  # timezone を追加 # 追加
+
+# タイムゾーンを日本設定にする
+os.environ['TZ'] = 'Asia/Tokyo'
+if hasattr(time, 'tzset'):
+    time.tzset()
 import asyncio
 from datetime import datetime, timedelta, date, time
 from io import BytesIO
@@ -225,9 +232,6 @@ async def record_stamp_if_needed(club: ClubConfig, user_id: int, date_obj: date,
 
 
 async def get_stats_for_user(club: ClubConfig, user_id: int) -> Tuple[int, int, int]:
-    """
-    total_days, current_streak, max_streak を返す
-    """
     res = (
         supabase.table("stamps")
         .select("date")
@@ -238,37 +242,37 @@ async def get_stats_for_user(club: ClubConfig, user_id: int) -> Tuple[int, int, 
         .execute()
     )
 
-    dates = [datetime.strptime(r["date"], "%Y-%m-%d").date() for r in res.data]
+    dates = sorted(list(set([datetime.strptime(r["date"], "%Y-%m-%d").date() for r in res.data])))
     if not dates:
         return 0, 0, 0
 
     total = len(dates)
-
-    # 連続日数と最大連続日数を計算
-    max_streak = 1
-    current_streak = 1
+    max_streak = 0
+    current_streak = 0
+    
+    # 全期間の最大連続日数を計算
+    temp_streak = 1
     for i in range(1, len(dates)):
-        if dates[i] == dates[i - 1] + timedelta(days=1):
-            current_streak += 1
-            max_streak = max(max_streak, current_streak)
+        if dates[i] == dates[i-1] + timedelta(days=1):
+            temp_streak += 1
         else:
-            current_streak = 1
+            max_streak = max(max_streak, temp_streak)
+            temp_streak = 1
+    max_streak = max(max_streak, temp_streak)
 
-    # 今日含めて現在連続かどうか
+    # 「現在」の連続日数を計算（昨日または今日にスタンプがあるか）
     today = date.today()
-    # stamps の最後の日付から後ろをみて現在連続かを再計算
-    current = 1
-    for i in range(len(dates) - 1, 0, -1):
-        if dates[i] == dates[i - 1] + timedelta(days=1):
-            current += 1
-        else:
-            break
-    # ただし、最後の日付が今日でないなら連続は 0 にする
-    if dates[-1] != today:
-        current = 0
+    if dates[-1] == today or dates[-1] == today - timedelta(days=1):
+        current_streak = 1
+        for i in range(len(dates)-1, 0, -1):
+            if dates[i] == dates[i-1] + timedelta(days=1):
+                current_streak += 1
+            else:
+                break
+    else:
+        current_streak = 0
 
-    return total, current, max_streak
-
+    return total, current_streak, max_streak
 
 # ====== スタンプカード画像生成 ======
 
@@ -308,31 +312,35 @@ def load_calendar_base_image(club: ClubConfig, target_date: date) -> Image.Image
 
 def apply_stamps_to_calendar(
     club: ClubConfig,
-    target_month: date,
+    target_date: date,
     stamp_dates: List[date],
 ) -> BytesIO:
-    """
-    指定monthのカレンダーに stamp_dates の日日付にスタンプを押した画像を生成し、BytesIO を返す。
-    """
-    img = load_calendar_base_image(club, target_month)
+    # ベース画像を読み込み
+    img = load_calendar_base_image(club, target_date)
+    
+    # スタンプ画像を読み込み（images/stamp.png が必要）
     base_dir = os.path.join(os.path.dirname(__file__), "images")
     stamp_path = os.path.join(base_dir, "stamp.png")
     if not os.path.exists(stamp_path):
         raise FileNotFoundError(f"スタンプ画像が見つかりません: {stamp_path}")
-
+    
     stamp_img = Image.open(stamp_path).convert("RGBA")
-
+    
+    # スタンプを合成
     for d in stamp_dates:
-        if d.year == target_month.year and d.month == target_month.month:
+        try:
             x, y = get_day_position(d)
-            img.alpha_composite(stamp_img, dest=(x, y))
+            # スタンプのサイズを調整したい場合はここでリサイズ
+            # stamp_img = stamp_img.resize((100, 100)) 
+            img.alpha_composite(stamp_img, dest=(int(x), int(y)))
+        except Exception as e:
+            print(f"Stamp position error for {d}: {e}")
+            continue
 
     buf = BytesIO()
-    buf.name = "stamp_calendar.png"
     img.save(buf, format="PNG")
     buf.seek(0)
     return buf
-
 
 async def get_stamp_dates_for_month(club: ClubConfig, user_id: int, month_date: date) -> List[date]:
     start_d = date(month_date.year, month_date.month, 1)
@@ -434,12 +442,9 @@ async def on_voice_state_update(member, before, after):
 
 @tasks.loop(seconds=30)
 async def presence_checker():
-    """
-    30秒おきに全ギルドの対象VCを巡回し、
-    今いるメンバーを確認し、「今が監視範囲＆判定窓内」であれば
-    presence_accumulator に滞在時間を加算し、必要時間を超えたら stamps を付与する。
-    """
-    now = datetime.now()
+    # 修正：JSTを指定して取得
+    jst = timezone(timedelta(hours=9))
+    now = datetime.now(jst)
 
     for guild in bot.guilds:
         guild_clubs = club_cache.get(guild.id, {})
@@ -468,17 +473,17 @@ async def presence_checker():
                 # 判定窓内にいるときだけ滞在時間をカウント（「11時以前からいた」人も、
                 # 実際の必要時間カウントは 11:00〜11:15 の間とする）
                 if window_start <= now <= window_end:
-                    print(f"DEBUG: {member.display_name} is in window! Current seconds: {presence_accumulator.get(key, 0)}")
-        # ... 以降の処理
                     key_date = window_start.date()
                     key = (guild.id, club.club_id, member.id, key_date)
+                    
                     # 30秒ぶん加算
                     presence_accumulator[key] = presence_accumulator.get(key, 0) + 30
+                    
+                    print(f"DEBUG: {member.display_name} is in window! Current seconds: {presence_accumulator[key]}")
 
                     # 必要時間を超えたらスタンプ
                     seconds = presence_accumulator[key]
                     await record_stamp_if_needed(club, member.id, key_date, seconds)
-
 
 # ====== スラッシュコマンド ======
 
