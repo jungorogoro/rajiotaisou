@@ -778,82 +778,6 @@ async def ranking(interaction: discord.Interaction, club_name: str, period: str)
 
 
 
-# ====== /callm 機能のUIコンポーネント (安定版) ======
-
-class MemberSelectView(discord.ui.View):
-    def __init__(self, members: List[discord.Member], page=0):
-        super().__init__(timeout=180)
-        self.members = members
-        self.page = page
-        self.per_page = 25
-        
-        start = self.page * self.per_page
-        end = start + self.per_page
-        current_members = self.members[start:end]
-
-        options = [
-            discord.SelectOption(label=m.display_name, value=str(m.id))
-            for m in current_members
-        ]
-        
-        if options:
-            self.select = discord.ui.Select(
-                placeholder=f"メンションする人を選択 (Page {self.page + 1})",
-                min_values=1,
-                max_values=len(options),
-                options=options
-            )
-            # セレクトメニュー自体にコールバックを持たせず、ボタンで一括処理
-            self.add_item(self.select)
-
-        # ページ移動ボタン
-        prev_btn = discord.ui.Button(label="◀ 前", disabled=(self.page == 0), style=discord.ButtonStyle.gray)
-        prev_btn.callback = self.prev_page
-        self.add_item(prev_btn)
-
-        next_btn = discord.ui.Button(label="次 ▶", disabled=not (len(self.members) > end), style=discord.ButtonStyle.gray)
-        next_btn.callback = self.next_page
-        self.add_item(next_btn)
-
-        send_btn = discord.ui.Button(label="メッセージを入力して送信", style=discord.ButtonStyle.green)
-        send_btn.callback = self.open_modal
-        self.add_item(send_btn)
-
-    async def prev_page(self, interaction: discord.Interaction):
-        # ページ切り替え時は response.edit_message を使う
-        await interaction.response.edit_message(view=MemberSelectView(self.members, self.page - 1))
-
-    async def next_page(self, interaction: discord.Interaction):
-        await interaction.response.edit_message(view=MemberSelectView(self.members, self.page + 1))
-
-    async def open_modal(self, interaction: discord.Interaction):
-        # ボタン押下時にセレクトメニューの値を確認
-        if not hasattr(self, 'select') or not self.select.values:
-            return await interaction.response.send_message("メンバーが選択されていません。上の一覧から選んでください。", ephemeral=True)
-        
-        mentions = " ".join([f"<@{m_id}>" for m_id in self.select.values])
-        # モーダル表示。ここは defer してはいけない。
-        await interaction.response.send_modal(CallmMessageModal(mentions))
-
-class CallmMessageModal(discord.ui.Modal, title='送信メッセージ入力'):
-    content = discord.ui.TextInput(
-        label='メッセージ内容',
-        style=discord.TextStyle.paragraph,
-        placeholder='連絡事項を入力してください',
-        required=True
-    )
-    
-    def __init__(self, mentions: str):
-        super().__init__()
-        self.mentions = mentions
-
-    async def on_submit(self, interaction: discord.Interaction):
-        # 送信処理が重い場合を想定し、まず defer
-        await interaction.response.defer()
-        # その後、followup で送信
-        await interaction.followup.send(f"{self.mentions}\n\n{self.content.value}")
-
-
 # ====== /callm 機能のUIコンポーネント (最終安定版) ======
 
 class MemberSelectView(discord.ui.View):
@@ -991,6 +915,7 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
 
 
