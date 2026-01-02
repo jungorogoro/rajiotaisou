@@ -778,7 +778,7 @@ async def ranking(interaction: discord.Interaction, club_name: str, period: str)
 
 
 
-# ====== /callm 機能のUIコンポーネント (修正版) ======
+# ====== /callm 機能のUIコンポーネント (安定版) ======
 
 class MemberSelectView(discord.ui.View):
     def __init__(self, members: List[discord.Member], page=0):
@@ -803,14 +803,15 @@ class MemberSelectView(discord.ui.View):
                 max_values=len(options),
                 options=options
             )
+            # セレクトメニュー自体にコールバックを持たせず、ボタンで一括処理
             self.add_item(self.select)
 
         # ページ移動ボタン
-        prev_btn = discord.ui.Button(label="◀ 前", disabled=(self.page == 0))
+        prev_btn = discord.ui.Button(label="◀ 前", disabled=(self.page == 0), style=discord.ButtonStyle.gray)
         prev_btn.callback = self.prev_page
         self.add_item(prev_btn)
 
-        next_btn = discord.ui.Button(label="次 ▶", disabled=not (len(self.members) > end))
+        next_btn = discord.ui.Button(label="次 ▶", disabled=not (len(self.members) > end), style=discord.ButtonStyle.gray)
         next_btn.callback = self.next_page
         self.add_item(next_btn)
 
@@ -819,18 +820,19 @@ class MemberSelectView(discord.ui.View):
         self.add_item(send_btn)
 
     async def prev_page(self, interaction: discord.Interaction):
+        # ページ切り替え時は response.edit_message を使う
         await interaction.response.edit_message(view=MemberSelectView(self.members, self.page - 1))
 
     async def next_page(self, interaction: discord.Interaction):
         await interaction.response.edit_message(view=MemberSelectView(self.members, self.page + 1))
 
     async def open_modal(self, interaction: discord.Interaction):
-        # セレクトメニューの選択値を取得
+        # ボタン押下時にセレクトメニューの値を確認
         if not hasattr(self, 'select') or not self.select.values:
-            return await interaction.response.send_message("メンバーが選択されていません。", ephemeral=True)
+            return await interaction.response.send_message("メンバーが選択されていません。上の一覧から選んでください。", ephemeral=True)
         
         mentions = " ".join([f"<@{m_id}>" for m_id in self.select.values])
-        # モーダルは defer している最中には出せないので、そのまま response.send_modal を使う
+        # モーダル表示。ここは defer してはいけない。
         await interaction.response.send_modal(CallmMessageModal(mentions))
 
 class CallmMessageModal(discord.ui.Modal, title='送信メッセージ入力'):
@@ -846,24 +848,26 @@ class CallmMessageModal(discord.ui.Modal, title='送信メッセージ入力'):
         self.mentions = mentions
 
     async def on_submit(self, interaction: discord.Interaction):
-        # 送信は時間がかかる可能性があるため、一度 defer する
+        # 送信処理が重い場合を想定し、まず defer
         await interaction.response.defer()
+        # その後、followup で送信
         await interaction.followup.send(f"{self.mentions}\n\n{self.content.value}")
 
 
-# ====== /callm コマンド本体 (修正版) ======
+# ====== /callm コマンド本体 (安定版) ======
 
 @bot.tree.command(name="callm", description="登録済みロールからメンバーを選んで一括メンションします")
 async def callm(interaction: discord.Interaction):
-    # 最初に defer して「考え中...」にする（これで3秒ルールを突破）
+    # 最初のコマンド入力で defer
     await interaction.response.defer(ephemeral=True)
 
     try:
+        # Supabaseからロール取得
         res = supabase.table("callm_roles").select("role_id").eq("guild_id", interaction.guild_id).execute()
         role_ids = [row['role_id'] for row in res.data]
 
         if not role_ids:
-            return await interaction.followup.send("登録されているロールがありません。", ephemeral=True)
+            return await interaction.followup.send("登録されているロールがありません。`/callm_add` で追加してください。", ephemeral=True)
 
         options = []
         for r_id in role_ids:
@@ -872,33 +876,41 @@ async def callm(interaction: discord.Interaction):
                 options.append(discord.SelectOption(label=role.name, value=str(role.id)))
 
         if not options:
-            return await interaction.followup.send("対象のロールが見つかりませんでした。", ephemeral=True)
+            return await interaction.followup.send("対象のロールがサーバー内に見つかりません。", ephemeral=True)
 
         view = discord.ui.View()
         select = discord.ui.Select(placeholder="対象のロールを選択してください", options=options)
 
+        # ！！重要！！ ロールを選択した後の処理
         async def role_selected_callback(inter: discord.Interaction):
-            # ロール選択時も defer する
+            # ここでも「インタラクションに失敗しました」を防ぐために即 response.defer を使う
+            # ただし、今回は ephemeral=True のメッセージを「編集」してメンバー一覧を出す
             selected_role = inter.guild.get_role(int(select.values[0]))
-            if not selected_role or not selected_role.members:
-                return await inter.response.send_message("メンバーがいません。", ephemeral=True)
             
-            # メンバー選択画面を表示
-            await inter.response.send_message(
-                f"**{selected_role.name}** のメンバーを選択してください:",
-                view=MemberSelectView(selected_role.members),
-                ephemeral=True
+            if not selected_role:
+                return await inter.response.send_message("ロールが見つかりませんでした。", ephemeral=True)
+
+            # メンバー一覧を取得。IntentsがOFFだとここが空になります。
+            members = selected_role.members
+            if not members:
+                return await inter.response.send_message(f"ロール `{selected_role.name}` にメンバーはいません。", ephemeral=True)
+            
+            # メッセージを「更新」してメンバー選択画面（MemberSelectView）を出す
+            await inter.response.edit_message(
+                content=f"**{selected_role.name}** のメンバーを選択してください（複数可）:",
+                view=MemberSelectView(members)
             )
 
         select.callback = role_selected_callback
         view.add_item(select)
         
-        # defer しているので followup で送る
-        await interaction.followup.send("どのロールを呼び出しますか？", view=view, ephemeral=True)
+        # 最初の「どのロールを呼び出しますか？」を表示
+        await interaction.followup.send("どのロールのメンバーを呼び出しますか？", view=view, ephemeral=True)
 
     except Exception as e:
         print(f"Error in callm: {e}")
-        await interaction.followup.send("エラーが発生しました。", ephemeral=True)
+        # すでに defer しているので followup でエラーを返す
+        await interaction.followup.send(f"エラーが発生しました: {e}", ephemeral=True)
 
 
 # ====== Bot 起動 ======
@@ -911,6 +923,7 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
 
 
