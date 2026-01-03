@@ -785,13 +785,19 @@ class PageButton(discord.ui.Button):
         super().__init__(label=label)
         self.direction = direction
 
-    async def callback(self, interaction: discord.Interaction):
-        view: MemberSelectView = self.view
-        new_page = view.page + self.direction
+async def callback(self, interaction: discord.Interaction):
+    # ★ まず即応答（3秒対策）
+    await interaction.response.defer(ephemeral=True)
 
-        await interaction.response.edit_message(
-            view=MemberSelectView(view.members, new_page)
-        )
+    view: MemberSelectView = self.view
+    new_page = view.page + self.direction
+
+    # ★ 後続で編集
+    await interaction.followup.edit_message(
+        message_id=interaction.message.id,
+        view=MemberSelectView(view.members, new_page)
+    )
+
 
 
 class MemberSelectView(discord.ui.View):
@@ -941,6 +947,7 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
 
 
