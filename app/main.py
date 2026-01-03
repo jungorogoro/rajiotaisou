@@ -896,16 +896,16 @@ async def callm(interaction: discord.Interaction):
     select = discord.ui.Select(placeholder="対象のロールを選択してください", options=options)
 
     async def role_selected_callback(inter: discord.Interaction):
+        await inter.response.defer(ephemeral=True)
+
         selected_role = inter.guild.get_role(int(select.values[0]))
-        if not selected_role.members:
-            return await inter.response.send_message(f"{selected_role.name} にはメンバーがいません。", ephemeral=True)
-        
-        # メンバー選択View（ページめくり機能付き）を表示
-        await inter.response.send_message(
+
+        await inter.followup.send(
             f"**{selected_role.name}** のメンバーを選択してください:",
             view=MemberSelectView(selected_role.members),
             ephemeral=True
         )
+
 
     select.callback = role_selected_callback
     view.add_item(select)
@@ -947,6 +947,7 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
 
 
