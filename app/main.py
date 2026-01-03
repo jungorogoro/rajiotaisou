@@ -778,7 +778,7 @@ async def ranking(interaction: discord.Interaction, club_name: str, period: str)
 
 
 
-# ====== /callm 機能のUIコンポーネント (最終安定版) ======
+# ====== /callm 機能のUIコンポーネント ======
 
 class MemberSelectView(discord.ui.View):
     def __init__(self, members: List[discord.Member], page=0):
@@ -786,123 +786,128 @@ class MemberSelectView(discord.ui.View):
         self.members = members
         self.page = page
         self.per_page = 25
-        
-        start = self.page * self.per_page
-        end = start + self.per_page
-        current_members = self.members[start:end]
 
-        options = []
-        for m in current_members:
-            # ニックネームがあれば表示、なければユーザー名
-            label = m.display_name[:25] # 25文字制限対策
-            options.append(discord.SelectOption(label=label, value=str(m.id)))
-        
+        start = page * self.per_page
+        end = start + self.per_page
+        current_members = members[start:end]
+
+        options = [
+            discord.SelectOption(label=m.display_name, value=str(m.id))
+            for m in current_members
+        ]
+
         if options:
             self.select = discord.ui.Select(
-                placeholder=f"メンション先を選択 (Page {self.page + 1})",
+                placeholder=f"メンションする人を選択 (Page {page + 1})",
                 min_values=1,
                 max_values=len(options),
                 options=options
             )
             self.add_item(self.select)
 
-        # ページ移動ボタン
-        self.add_item(discord.ui.Button(label="◀ 前", disabled=(self.page == 0), custom_id="callm_prev"))
-        has_next = len(self.members) > end
-        self.add_item(discord.ui.Button(label="次 ▶", disabled=not has_next, custom_id="callm_next"))
+        # ページボタン
+        if page > 0:
+            self.add_item(PageButton("◀ 前", -1))
+        if len(members) > end:
+            self.add_item(PageButton("次 ▶", 1))
 
-        send_btn = discord.ui.Button(label="メッセージを入力して送信", style=discord.ButtonStyle.green)
+        send_btn = discord.ui.Button(
+            label="メッセージを入力して送信",
+            style=discord.ButtonStyle.green
+        )
         send_btn.callback = self.open_modal
         self.add_item(send_btn)
 
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        # ボタンクリック時のカスタムID判定
-        cid = interaction.data.get("custom_id")
-        if cid == "callm_prev":
-            await interaction.response.edit_message(view=MemberSelectView(self.members, self.page - 1))
-            return False
-        elif cid == "callm_next":
-            await interaction.response.edit_message(view=MemberSelectView(self.members, self.page + 1))
-            return False
-        return True
 
     async def open_modal(self, interaction: discord.Interaction):
-        # 選択内容の確認
         if not hasattr(self, 'select') or not self.select.values:
-            return await interaction.response.send_message("メンバーが選択されていません。リストから選んでからボタンを押してください。", ephemeral=True)
+            return await interaction.response.send_message("メンバーが一人も選択されていません。", ephemeral=True)
         
         mentions = " ".join([f"<@{m_id}>" for m_id in self.select.values])
-        # Modalは response.defer 状態では出せないので、そのまま送る
         await interaction.response.send_modal(CallmMessageModal(mentions))
 
 class CallmMessageModal(discord.ui.Modal, title='送信メッセージ入力'):
-    content = discord.ui.TextInput(label='内容', style=discord.TextStyle.paragraph, required=True)
+    """メンションと一緒に送る文章を入力するモーダル"""
+    content = discord.ui.TextInput(
+        label='メッセージ内容',
+        style=discord.TextStyle.paragraph,
+        placeholder='連絡事項を入力してください',
+        required=True
+    )
     
     def __init__(self, mentions: str):
         super().__init__()
         self.mentions = mentions
 
     async def on_submit(self, interaction: discord.Interaction):
-        # 送信前に一度 defer してタイムアウトを防ぐ
-        await interaction.response.defer()
-        # 実際の送信
-        await interaction.followup.send(f"{self.mentions}\n\n{self.content.value}")
+        # メンションとメッセージを送信
+        await interaction.response.send_message(f"{self.mentions}\n\n{self.content.value}")
 
 
-# ====== /callm コマンド本体 (最終安定版) ======
+# ====== /callm コマンド本体 ======
 
 @bot.tree.command(name="callm", description="登録済みロールからメンバーを選んで一括メンションします")
 async def callm(interaction: discord.Interaction):
-    # 即座に defer を実行（3秒ルール回避）
-    await interaction.response.defer(ephemeral=True)
+    # Supabaseから登録済みロールを取得
+    res = supabase.table("callm_roles").select("role_id").eq("guild_id", interaction.guild_id).execute()
+    role_ids = [row['role_id'] for row in res.data]
 
-    try:
-        # Supabase からデータ取得
-        res = supabase.table("callm_roles").select("role_id").eq("guild_id", interaction.guild_id).execute()
-        role_ids = [row['role_id'] for row in res.data]
+    if not role_ids:
+        return await interaction.response.send_message("登録されているロールがありません。`/callm_add` で追加してください。", ephemeral=True)
 
-        if not role_ids:
-            return await interaction.followup.send("登録済みロールがありません。`/callm_add` で追加してください。", ephemeral=True)
+    # ロール選択メニューの作成
+    options = []
+    for r_id in role_ids:
+        role = interaction.guild.get_role(r_id)
+        if role:
+            options.append(discord.SelectOption(label=role.name, value=str(role.id)))
 
-        options = []
-        for r_id in role_ids:
-            role = interaction.guild.get_role(r_id)
-            if role:
-                options.append(discord.SelectOption(label=role.name, value=str(role.id)))
+    if not options:
+        return await interaction.response.send_message("登録されたロールがこのサーバーで見つかりません。", ephemeral=True)
 
-        if not options:
-            return await interaction.followup.send("有効なロールが見つかりませんでした。", ephemeral=True)
+    view = discord.ui.View()
+    select = discord.ui.Select(placeholder="対象のロールを選択してください", options=options)
 
-        # 最初のロール選択メニュー
-        view = discord.ui.View()
-        select = discord.ui.Select(placeholder="ロールを選んでください", options=options)
-
-        async def callback(inter: discord.Interaction):
-            # 重要：ロール選択時も即座にレスポンスを返す
-            selected_role = inter.guild.get_role(int(select.values[0]))
-            
-            # Intentsが有効でない場合、selected_role.membersは空になります
-            members = selected_role.members
-            if not members:
-                # Intentsの警告をログに出す
-                print(f"DEBUG: Role {selected_role.name} has no members. Check Privileged Intents!")
-                return await inter.response.send_message("メンバー情報を取得できません。BotのIntents設定を確認してください。", ephemeral=True)
-
-            # メッセージ自体を書き換えてメンバー一覧を出す
-            await inter.response.edit_message(
-                content=f"**{selected_role.name}** のメンバーを選択:",
-                view=MemberSelectView(members)
-            )
-
-        select.callback = callback
-        view.add_item(select)
+    async def role_selected_callback(inter: discord.Interaction):
+        selected_role = inter.guild.get_role(int(select.values[0]))
+        if not selected_role.members:
+            return await inter.response.send_message(f"{selected_role.name} にはメンバーがいません。", ephemeral=True)
         
-        # followup で最初の画面を表示
-        await interaction.followup.send("呼び出すロールを選択してください：", view=view, ephemeral=True)
+        # メンバー選択View（ページめくり機能付き）を表示
+        await inter.response.send_message(
+            f"**{selected_role.name}** のメンバーを選択してください:",
+            view=MemberSelectView(selected_role.members),
+            ephemeral=True
+        )
 
+    select.callback = role_selected_callback
+    view.add_item(select)
+    await interaction.response.send_message("どのロールを呼び出しますか？", view=view, ephemeral=True)
+
+
+# ====== ロール管理コマンド（管理者専用） ======
+
+@bot.tree.command(name="callm_add", description="【管理者】/callm の選択肢にロールを追加します")
+@app_commands.default_permissions(administrator=True)
+async def callm_add(interaction: discord.Interaction, role: discord.Role):
+    try:
+        # Upsertで登録
+        supabase.table("callm_roles").upsert({
+            "guild_id": interaction.guild_id,
+            "role_id": role.id
+        }).execute()
+        await interaction.response.send_message(f"ロール `{role.name}` を /callm のリストに追加しました。")
     except Exception as e:
-        print(f"CRITICAL ERROR: {e}")
-        await interaction.followup.send(f"実行中にエラーが発生しました: {e}", ephemeral=True)
+        await interaction.response.send_message(f"エラーが発生しました: {e}", ephemeral=True)
+
+@bot.tree.command(name="callm_del", description="【管理者】/callm のリストからロールを削除します")
+@app_commands.default_permissions(administrator=True)
+async def callm_del(interaction: discord.Interaction, role: discord.Role):
+    try:
+        supabase.table("callm_roles").delete().eq("guild_id", interaction.guild_id).eq("role_id", role.id).execute()
+        await interaction.response.send_message(f"ロール `{role.name}` を /callm のリストから削除しました。")
+    except Exception as e:
+        await interaction.response.send_message(f"エラーが発生しました: {e}", ephemeral=True)
 
 
 # ====== Bot 起動 ======
@@ -915,6 +920,7 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
 
 
