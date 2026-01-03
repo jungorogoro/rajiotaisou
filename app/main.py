@@ -778,25 +778,25 @@ async def ranking(interaction: discord.Interaction, club_name: str, period: str)
 
 
 
-# ====== /callm 機能のUIコンポーネント ======
+# ====== ★追加機能　/callm 機能のUIコンポーネント ======
 
 class PageButton(discord.ui.Button):
     def __init__(self, label: str, direction: int):
         super().__init__(label=label)
         self.direction = direction
 
-async def callback(self, interaction: discord.Interaction):
-    # ★ まず即応答（3秒対策）
-    await interaction.response.defer(ephemeral=True)
+    async def callback(self, interaction: discord.Interaction):
+        # ★ まず即応答（3秒対策）
+        await interaction.response.defer(ephemeral=True)
 
-    view: MemberSelectView = self.view
-    new_page = view.page + self.direction
+        view: MemberSelectView = self.view
+        new_page = view.page + self.direction
 
-    # ★ 後続で編集
-    await interaction.followup.edit_message(
-        message_id=interaction.message.id,
-        view=MemberSelectView(view.members, new_page)
-    )
+        # ★ 後続で編集
+        await interaction.followup.edit_message(
+            message_id=interaction.message.id,
+            view=MemberSelectView(view.members, new_page)
+        )
 
 
 
@@ -947,6 +947,7 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
 
 
