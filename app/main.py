@@ -780,6 +780,20 @@ async def ranking(interaction: discord.Interaction, club_name: str, period: str)
 
 # ====== /callm 機能のUIコンポーネント ======
 
+class PageButton(discord.ui.Button):
+    def __init__(self, label: str, direction: int):
+        super().__init__(label=label)
+        self.direction = direction
+
+    async def callback(self, interaction: discord.Interaction):
+        view: MemberSelectView = self.view
+        new_page = view.page + self.direction
+
+        await interaction.response.edit_message(
+            view=MemberSelectView(view.members, new_page)
+        )
+
+
 class MemberSelectView(discord.ui.View):
     def __init__(self, members: List[discord.Member], page=0):
         super().__init__(timeout=180)
@@ -795,6 +809,13 @@ class MemberSelectView(discord.ui.View):
             discord.SelectOption(label=m.display_name, value=str(m.id))
             for m in current_members
         ]
+        if not options:
+            self.add_item(
+                discord.ui.Button(
+                    label="このページにメンバーはいません",
+                    disabled=True
+                )
+            )
 
         if options:
             self.select = discord.ui.Select(
@@ -920,6 +941,7 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
 
 
