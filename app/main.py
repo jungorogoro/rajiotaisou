@@ -779,25 +779,20 @@ async def ranking(interaction: discord.Interaction, club_name: str, period: str)
 
 
 # ====== ★追加機能　/callm 機能のUIコンポーネント ======
-
 class PageButton(discord.ui.Button):
     def __init__(self, label: str, direction: int):
         super().__init__(label=label)
         self.direction = direction
 
     async def callback(self, interaction: discord.Interaction):
-        # ★ まず即応答（3秒対策）
-        await interaction.response.defer(ephemeral=True)
-
+        # ★ defer()を使わずにedit_messageで応答する
         view: MemberSelectView = self.view
         new_page = view.page + self.direction
-
-        # ★ ここが修正点
-        await interaction.edit_original_response(
+        
+        # 新しいページでViewを再生成してメッセージを更新
+        await interaction.response.edit_message(
             view=MemberSelectView(view.members, new_page)
         )
-
-
 
 class MemberSelectView(discord.ui.View):
     def __init__(self, members: List[discord.Member], page=0):
@@ -814,13 +809,6 @@ class MemberSelectView(discord.ui.View):
             discord.SelectOption(label=m.display_name, value=str(m.id))
             for m in current_members
         ]
-        if not options:
-            self.add_item(
-                discord.ui.Button(
-                    label="このページにメンバーはいません",
-                    disabled=True
-                )
-            )
 
         if options:
             self.select = discord.ui.Select(
@@ -829,9 +817,12 @@ class MemberSelectView(discord.ui.View):
                 max_values=len(options),
                 options=options
             )
+            # ★ SelectMenu自体が押された時、何もしないとタイムアウトするので即deferする
+            self.select.callback = self.select_callback 
             self.add_item(self.select)
+        else:
+            self.add_item(discord.ui.Button(label="このページにメンバーはいません", disabled=True))
 
-        # ページボタン
         if page > 0:
             self.add_item(PageButton("◀ 前", -1))
         if len(members) > end:
@@ -844,21 +835,31 @@ class MemberSelectView(discord.ui.View):
         send_btn.callback = self.open_modal
         self.add_item(send_btn)
 
+    # ★ セレクトメニューで選ぶたびにエラーが出るのを防ぐ
+    async def select_callback(self, interaction: discord.Interaction):
+        await interaction.response.defer()
 
     async def open_modal(self, interaction: discord.Interaction):
+        # 選択チェック
         if not hasattr(self, 'select') or not self.select.values:
             return await interaction.response.send_message("メンバーが一人も選択されていません。", ephemeral=True)
         
         mentions = " ".join([f"<@{m_id}>" for m_id in self.select.values])
+        
+        # ★ 重要：ここでは絶対に interaction.response.defer() を呼んではいけない
+        # 直接Modalを送信する
         await interaction.response.send_modal(CallmMessageModal(mentions))
 
 class CallmMessageModal(discord.ui.Modal, title='送信メッセージ入力'):
     """メンションと一緒に送る文章を入力するモーダル"""
+    
+    # 入力欄の設定
     content = discord.ui.TextInput(
         label='メッセージ内容',
         style=discord.TextStyle.paragraph,
-        placeholder='連絡事項を入力してください',
-        required=True
+        placeholder='ここに連絡事項を入力してください',
+        required=True,
+        max_length=1500  # メンション分を考慮して少し余裕を持たせる
     )
     
     def __init__(self, mentions: str):
@@ -866,9 +867,14 @@ class CallmMessageModal(discord.ui.Modal, title='送信メッセージ入力'):
         self.mentions = mentions
 
     async def on_submit(self, interaction: discord.Interaction):
-        # メンションとメッセージを送信
-        await interaction.response.send_message(f"{self.mentions}\n\n{self.content.value}")
-
+        # 3秒以上かかる可能性（送信処理など）がある場合はここでもdeferできますが、
+        # 通常のメッセージ送信ならそのまま response.send_message でOKです。
+        
+        # 最終的なメッセージを組み立てて送信
+        final_message = f"{self.mentions}\n\n{self.content.value}"
+        
+        # 全体に見える形で送信
+        await interaction.response.send_message(final_message)
 
 # ====== /callm コマンド本体 ======
 
@@ -946,16 +952,6 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
-
-
-
-
-
-
-
-
-
 
 
 
